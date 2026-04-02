@@ -25,13 +25,26 @@ pub struct StatRow {
     pub js_exports_named: Option<i64>,
     pub js_exports_total: Option<i64>,
     pub js_export_matches_filename: i64,
+
+    pub py_file_count: i64,
+    pub js_file_count: i64,
+    pub jsx_file_count: i64,
+    pub ts_file_count: i64,
+    pub tsx_file_count: i64,
+    pub css_file_count: i64,
+    pub html_file_count: i64,
+    pub md_file_count: i64,
+    pub json_file_count: i64,
+    pub yaml_file_count: i64,
 }
 
 const SELECT_COLS: &str =
     "repo, commit_sha, commit_date, row_type, folder, folder_depth, file_name,
      file_count, sloc_nonblank, sloc_noncomment,
      file_type, source_file_count, test_file_count, story_file_count, config_file_count,
-     js_exports_default, js_exports_named, js_exports_total, js_export_matches_filename";
+     js_exports_default, js_exports_named, js_exports_total, js_export_matches_filename,
+     py_file_count, js_file_count, jsx_file_count, ts_file_count, tsx_file_count,
+     css_file_count, html_file_count, md_file_count, json_file_count, yaml_file_count";
 
 fn row_from_sql(row: &Row<'_>) -> rusqlite::Result<StatRow> {
     Ok(StatRow {
@@ -54,6 +67,16 @@ fn row_from_sql(row: &Row<'_>) -> rusqlite::Result<StatRow> {
         js_exports_named: row.get(16)?,
         js_exports_total: row.get(17)?,
         js_export_matches_filename: row.get(18)?,
+        py_file_count: row.get(19)?,
+        js_file_count: row.get(20)?,
+        jsx_file_count: row.get(21)?,
+        ts_file_count: row.get(22)?,
+        tsx_file_count: row.get(23)?,
+        css_file_count: row.get(24)?,
+        html_file_count: row.get(25)?,
+        md_file_count: row.get(26)?,
+        json_file_count: row.get(27)?,
+        yaml_file_count: row.get(28)?,
     })
 }
 
@@ -212,14 +235,16 @@ pub fn insert_rows(conn: &Connection, rows: &[StatRow]) -> Result<()> {
             (repo, commit_sha, commit_date, row_type, folder, folder_depth, file_name,
              file_count, sloc_nonblank, sloc_noncomment,
              file_type, source_file_count, test_file_count, story_file_count, config_file_count,
-             js_exports_default, js_exports_named, js_exports_total,
-             js_export_matches_filename)
+             js_exports_default, js_exports_named, js_exports_total, js_export_matches_filename,
+             py_file_count, js_file_count, jsx_file_count, ts_file_count, tsx_file_count,
+             css_file_count, html_file_count, md_file_count, json_file_count, yaml_file_count)
          VALUES
             (?1, ?2, ?3, ?4, ?5, ?6, ?7,
              ?8, ?9, ?10,
              ?11, ?12, ?13, ?14, ?15,
-             ?16, ?17, ?18,
-             ?19)",
+             ?16, ?17, ?18, ?19,
+             ?20, ?21, ?22, ?23, ?24,
+             ?25, ?26, ?27, ?28, ?29)",
     )?;
 
     for row in rows {
@@ -243,6 +268,16 @@ pub fn insert_rows(conn: &Connection, rows: &[StatRow]) -> Result<()> {
             row.js_exports_named,
             row.js_exports_total,
             row.js_export_matches_filename,
+            row.py_file_count,
+            row.js_file_count,
+            row.jsx_file_count,
+            row.ts_file_count,
+            row.tsx_file_count,
+            row.css_file_count,
+            row.html_file_count,
+            row.md_file_count,
+            row.json_file_count,
+            row.yaml_file_count,
         ])?;
     }
 

@@ -1,5 +1,6 @@
 pub mod common;
 pub mod javascript;
+pub mod python;
 
 /// Stats collected for a single file. Populated by one or more `Analyzer`s.
 #[derive(Default)]

@@ -39,7 +39,21 @@ pub fn ensure(conn: &Connection) -> Result<()> {
 
             -- 0/1 on file rows (1 = some export name matches the file stem),
             -- SUM on aggregate rows (count of files where it matched)
-            js_export_matches_filename INTEGER NOT NULL DEFAULT 0
+            js_export_matches_filename INTEGER NOT NULL DEFAULT 0,
+
+            -- Per-extension file counts (0/1 on file rows, SUM on aggregate rows)
+            -- js = .js/.mjs/.cjs, ts = .ts/.mts/.cts, css = .css/.scss/.sass/.less,
+            -- html = .html/.htm, md = .md/.mdx, yaml = .yaml/.yml
+            py_file_count      INTEGER NOT NULL DEFAULT 0,
+            js_file_count      INTEGER NOT NULL DEFAULT 0,
+            jsx_file_count     INTEGER NOT NULL DEFAULT 0,
+            ts_file_count      INTEGER NOT NULL DEFAULT 0,
+            tsx_file_count     INTEGER NOT NULL DEFAULT 0,
+            css_file_count     INTEGER NOT NULL DEFAULT 0,
+            html_file_count    INTEGER NOT NULL DEFAULT 0,
+            md_file_count      INTEGER NOT NULL DEFAULT 0,
+            json_file_count    INTEGER NOT NULL DEFAULT 0,
+            yaml_file_count    INTEGER NOT NULL DEFAULT 0
         );
 
         -- Lightweight index kept at all times for fast commit_exists lookups.

@@ -28,6 +28,16 @@ pub fn aggregate_to_folders(file_rows: &[StatRow]) -> Vec<StatRow> {
             js_exports_named: None,
             js_exports_total: None,
             js_export_matches_filename: 0,
+            py_file_count: 0,
+            js_file_count: 0,
+            jsx_file_count: 0,
+            ts_file_count: 0,
+            tsx_file_count: 0,
+            css_file_count: 0,
+            html_file_count: 0,
+            md_file_count: 0,
+            json_file_count: 0,
+            yaml_file_count: 0,
         });
 
         agg.file_count += row.file_count;
@@ -41,6 +51,16 @@ pub fn aggregate_to_folders(file_rows: &[StatRow]) -> Vec<StatRow> {
         add_opt(&mut agg.js_exports_named, row.js_exports_named);
         add_opt(&mut agg.js_exports_total, row.js_exports_total);
         agg.js_export_matches_filename += row.js_export_matches_filename;
+        agg.py_file_count += row.py_file_count;
+        agg.js_file_count += row.js_file_count;
+        agg.jsx_file_count += row.jsx_file_count;
+        agg.ts_file_count += row.ts_file_count;
+        agg.tsx_file_count += row.tsx_file_count;
+        agg.css_file_count += row.css_file_count;
+        agg.html_file_count += row.html_file_count;
+        agg.md_file_count += row.md_file_count;
+        agg.json_file_count += row.json_file_count;
+        agg.yaml_file_count += row.yaml_file_count;
     }
 
     map.into_values().collect()
@@ -73,6 +93,16 @@ pub fn aggregate_to_repo(
         js_exports_named: None,
         js_exports_total: None,
         js_export_matches_filename: 0,
+        py_file_count: 0,
+        js_file_count: 0,
+        jsx_file_count: 0,
+        ts_file_count: 0,
+        tsx_file_count: 0,
+        css_file_count: 0,
+        html_file_count: 0,
+        md_file_count: 0,
+        json_file_count: 0,
+        yaml_file_count: 0,
     };
 
     for row in file_rows {
@@ -87,6 +117,16 @@ pub fn aggregate_to_repo(
         add_opt(&mut result.js_exports_named, row.js_exports_named);
         add_opt(&mut result.js_exports_total, row.js_exports_total);
         result.js_export_matches_filename += row.js_export_matches_filename;
+        result.py_file_count += row.py_file_count;
+        result.js_file_count += row.js_file_count;
+        result.jsx_file_count += row.jsx_file_count;
+        result.ts_file_count += row.ts_file_count;
+        result.tsx_file_count += row.tsx_file_count;
+        result.css_file_count += row.css_file_count;
+        result.html_file_count += row.html_file_count;
+        result.md_file_count += row.md_file_count;
+        result.json_file_count += row.json_file_count;
+        result.yaml_file_count += row.yaml_file_count;
     }
 
     result
@@ -117,6 +157,16 @@ pub fn apply_delta(
         sub_opt(&mut base.js_exports_named, r.js_exports_named);
         sub_opt(&mut base.js_exports_total, r.js_exports_total);
         base.js_export_matches_filename -= r.js_export_matches_filename;
+        base.py_file_count -= r.py_file_count;
+        base.js_file_count -= r.js_file_count;
+        base.jsx_file_count -= r.jsx_file_count;
+        base.ts_file_count -= r.ts_file_count;
+        base.tsx_file_count -= r.tsx_file_count;
+        base.css_file_count -= r.css_file_count;
+        base.html_file_count -= r.html_file_count;
+        base.md_file_count -= r.md_file_count;
+        base.json_file_count -= r.json_file_count;
+        base.yaml_file_count -= r.yaml_file_count;
     }
     for a in added {
         base.file_count += a.file_count;
@@ -130,6 +180,16 @@ pub fn apply_delta(
         add_opt(&mut base.js_exports_named, a.js_exports_named);
         add_opt(&mut base.js_exports_total, a.js_exports_total);
         base.js_export_matches_filename += a.js_export_matches_filename;
+        base.py_file_count += a.py_file_count;
+        base.js_file_count += a.js_file_count;
+        base.jsx_file_count += a.jsx_file_count;
+        base.ts_file_count += a.ts_file_count;
+        base.tsx_file_count += a.tsx_file_count;
+        base.css_file_count += a.css_file_count;
+        base.html_file_count += a.html_file_count;
+        base.md_file_count += a.md_file_count;
+        base.json_file_count += a.json_file_count;
+        base.yaml_file_count += a.yaml_file_count;
     }
     base
 }

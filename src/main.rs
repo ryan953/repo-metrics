@@ -31,11 +31,13 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
     let analyzers: &[&dyn analyzers::Analyzer] = &[
         &analyzers::common::CommonAnalyzer,
         &analyzers::javascript::JsAnalyzer,
+        &analyzers::python::PyAnalyzer,
     ];
 
     let mut analyzed = 0usize;
     let mut skipped = 0usize;
     let mut analysis_start: Option<std::time::Instant> = None;
+    let wall_start = std::time::Instant::now();
 
     // Drop the unique index before bulk inserts; it will be rebuilt once at the end.
     // The lightweight idx_commit_lookup index is kept so commit_exists stays fast.
@@ -82,7 +84,14 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
         )?;
 
         if !used_delta {
-            let file_entries = git::walk_files(&repo, commit_sha)?;
+            let file_entries = match git::walk_files(&repo, commit_sha) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    eprintln!("  skipping {}: {}", &commit_sha[..8], e);
+                    skipped += 1;
+                    continue;
+                }
+            };
 
             let mut file_rows = Vec::with_capacity(file_entries.len());
             for entry in &file_entries {
@@ -123,9 +132,17 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
     eprintln!("Rebuilding unique index...");
     db::schema::ensure_unique_index(&conn)?;
 
+    let elapsed = wall_start.elapsed().as_secs_f64();
+    let elapsed_str = if elapsed < 60.0 {
+        format!("{:.1}s", elapsed)
+    } else if elapsed < 3600.0 {
+        format!("{:.1}m", elapsed / 60.0)
+    } else {
+        format!("{:.1}h", elapsed / 3600.0)
+    };
     eprintln!(
-        "Done: {} analyzed, {} skipped (already in db)",
-        analyzed, skipped
+        "Done: {} analyzed, {} skipped (already in db), took {}",
+        analyzed, skipped, elapsed_str
     );
     Ok(())
 }
@@ -143,12 +160,16 @@ fn try_delta_analyze(
     commit_date: &str,
     granularity: &Granularity,
 ) -> Result<bool> {
-    let parent = match git::parent_sha(repo, commit_sha)? {
-        Some(p) => p,
-        None => return Ok(false), // root commit
+    let parent = match git::parent_sha(repo, commit_sha) {
+        Ok(Some(p)) => p,
+        Ok(None) => return Ok(false), // root commit
+        Err(_) => return Ok(false),   // inaccessible commit object
     };
 
-    let diffs = git::diff_commits(repo, &parent, commit_sha)?;
+    let diffs = match git::diff_commits(repo, &parent, commit_sha) {
+        Ok(d) => d,
+        Err(_) => return Ok(false), // missing tree object — fall back to full analysis
+    };
     if diffs.len() > DELTA_FALLBACK_THRESHOLD {
         return Ok(false);
     }
@@ -159,7 +180,7 @@ fn try_delta_analyze(
 
     for diff in &diffs {
         if let Some(old_path) = &diff.old_path {
-            if let Some(content) = git::read_file_at(repo, &parent, old_path)? {
+            if let Ok(Some(content)) = git::read_file_at(repo, &parent, old_path) {
                 let mut stats = analyzers::FileStats::default();
                 for analyzer in analyzers {
                     if analyzer.can_analyze(old_path) {
@@ -170,7 +191,7 @@ fn try_delta_analyze(
             }
         }
         if let Some(new_path) = &diff.new_path {
-            if let Some(content) = git::read_file_at(repo, commit_sha, new_path)? {
+            if let Ok(Some(content)) = git::read_file_at(repo, commit_sha, new_path) {
                 let mut stats = analyzers::FileStats::default();
                 for analyzer in analyzers {
                     if analyzer.can_analyze(new_path) {
@@ -254,6 +275,16 @@ fn try_delta_analyze(
                     js_exports_named: None,
                     js_exports_total: None,
                     js_export_matches_filename: 0,
+                    py_file_count: 0,
+                    js_file_count: 0,
+                    jsx_file_count: 0,
+                    ts_file_count: 0,
+                    tsx_file_count: 0,
+                    css_file_count: 0,
+                    html_file_count: 0,
+                    md_file_count: 0,
+                    json_file_count: 0,
+                    yaml_file_count: 0,
                 });
             }
 
@@ -332,6 +363,16 @@ fn try_delta_analyze(
                     js_exports_named: None,
                     js_exports_total: None,
                     js_export_matches_filename: 0,
+                    py_file_count: 0,
+                    js_file_count: 0,
+                    jsx_file_count: 0,
+                    ts_file_count: 0,
+                    tsx_file_count: 0,
+                    css_file_count: 0,
+                    html_file_count: 0,
+                    md_file_count: 0,
+                    json_file_count: 0,
+                    yaml_file_count: 0,
                 });
             }
 
@@ -384,6 +425,19 @@ fn build_file_row(
     let story_file_count = i64::from(stats.file_type.as_deref() == Some("story"));
     let config_file_count = i64::from(stats.file_type.as_deref() == Some("config"));
 
+    // Extension-based file counts
+    let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
+    let py_file_count   = i64::from(matches!(ext.as_str(), "py"));
+    let js_file_count   = i64::from(matches!(ext.as_str(), "js" | "mjs" | "cjs"));
+    let jsx_file_count  = i64::from(matches!(ext.as_str(), "jsx"));
+    let ts_file_count   = i64::from(matches!(ext.as_str(), "ts" | "mts" | "cts"));
+    let tsx_file_count  = i64::from(matches!(ext.as_str(), "tsx"));
+    let css_file_count  = i64::from(matches!(ext.as_str(), "css" | "scss" | "sass" | "less"));
+    let html_file_count = i64::from(matches!(ext.as_str(), "html" | "htm"));
+    let md_file_count   = i64::from(matches!(ext.as_str(), "md" | "mdx"));
+    let json_file_count = i64::from(matches!(ext.as_str(), "json"));
+    let yaml_file_count = i64::from(matches!(ext.as_str(), "yaml" | "yml"));
+
     db::store::StatRow {
         repo: repo.to_string(),
         commit_sha: commit_sha.to_string(),
@@ -404,5 +458,15 @@ fn build_file_row(
         js_exports_named: stats.js_exports_named.map(|v| v as i64),
         js_exports_total: stats.js_exports_total.map(|v| v as i64),
         js_export_matches_filename: i64::from(stats.js_export_matches_filename),
+        py_file_count,
+        js_file_count,
+        jsx_file_count,
+        ts_file_count,
+        tsx_file_count,
+        css_file_count,
+        html_file_count,
+        md_file_count,
+        json_file_count,
+        yaml_file_count,
     }
 }
