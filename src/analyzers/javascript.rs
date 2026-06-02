@@ -72,7 +72,7 @@ fn classify_file_type(file_name: &str) -> &'static str {
     let name = file_name.rsplit('/').next().unwrap_or(file_name);
 
     // Name-based patterns take precedence over directory patterns
-    if name.contains(".test.") || name.contains(".spec.") {
+    if name.contains(".test.") || name.contains(".spec.") || name.contains(".snapshots.") {
         return "test";
     }
     if name.contains(".stories.") || name.contains(".story.") {
