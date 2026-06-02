@@ -11,6 +11,9 @@ use cli::{Cli, Commands, Granularity};
 /// If a commit changes more files than this, fall back to full tree analysis.
 const DELTA_FALLBACK_THRESHOLD: usize = 500;
 
+/// Number of analyzed commits per database transaction.
+const BATCH_SIZE: usize = 100;
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -20,7 +23,7 @@ fn main() -> Result<()> {
 
 fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
     let repo = git::open(&args.repo_path)?;
-    let mut conn = db::open(&args.db)?;
+    let conn = db::open(&args.db)?;
     db::schema::ensure(&conn)?;
 
     let since = args.since.as_deref().map(parse_since_date).transpose()?;
@@ -42,6 +45,8 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
     // Drop the unique index before bulk inserts; it will be rebuilt once at the end.
     // The lightweight idx_commit_lookup index is kept so commit_exists stays fast.
     db::schema::drop_unique_index(&conn)?;
+
+    conn.execute_batch("BEGIN")?;
 
     for (i, (commit_sha, commit_date)) in commits.iter().enumerate() {
         if db::store::commit_exists(&conn, &args.repo, commit_sha)? {
@@ -108,26 +113,29 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
             let repo_row =
                 aggregator::aggregate_to_repo(&args.repo, commit_sha, commit_date, &file_rows);
 
-            let tx = conn.transaction()?;
             match args.granularity {
                 Granularity::All => {
-                    db::store::insert_rows(&tx, &file_rows)?;
-                    db::store::insert_rows(&tx, &folder_rows)?;
-                    db::store::insert_rows(&tx, std::slice::from_ref(&repo_row))?;
+                    db::store::insert_rows(&conn, &file_rows)?;
+                    db::store::insert_rows(&conn, &folder_rows)?;
+                    db::store::insert_rows(&conn, std::slice::from_ref(&repo_row))?;
                 }
                 Granularity::Folder => {
-                    db::store::insert_rows(&tx, &folder_rows)?;
-                    db::store::insert_rows(&tx, std::slice::from_ref(&repo_row))?;
+                    db::store::insert_rows(&conn, &folder_rows)?;
+                    db::store::insert_rows(&conn, std::slice::from_ref(&repo_row))?;
                 }
                 Granularity::Repo => {
-                    db::store::insert_rows(&tx, std::slice::from_ref(&repo_row))?;
+                    db::store::insert_rows(&conn, std::slice::from_ref(&repo_row))?;
                 }
             }
-            tx.commit()?;
         }
 
         analyzed += 1;
+        if analyzed % BATCH_SIZE == 0 {
+            conn.execute_batch("COMMIT; BEGIN")?;
+        }
     }
+
+    conn.execute_batch("COMMIT")?;
 
     eprintln!("Rebuilding unique index...");
     db::schema::ensure_unique_index(&conn)?;
@@ -210,9 +218,7 @@ fn try_delta_analyze(
                 None => return Ok(false),
             };
             let new_repo = aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
-            let tx = conn.unchecked_transaction()?;
-            db::store::insert_rows(&tx, std::slice::from_ref(&new_repo))?;
-            tx.commit()?;
+            db::store::insert_rows(conn, std::slice::from_ref(&new_repo))?;
         }
 
         Granularity::Folder => {
@@ -304,11 +310,9 @@ fn try_delta_analyze(
 
             let new_repo = aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
 
-            let tx = conn.unchecked_transaction()?;
-            db::store::copy_folder_rows_from_parent(&tx, repo_name, &parent, commit_sha, commit_date, &affected_vec)?;
-            db::store::insert_rows(&tx, &new_folder_rows)?;
-            db::store::insert_rows(&tx, std::slice::from_ref(&new_repo))?;
-            tx.commit()?;
+            db::store::copy_folder_rows_from_parent(conn, repo_name, &parent, commit_sha, commit_date, &affected_vec)?;
+            db::store::insert_rows(conn, &new_folder_rows)?;
+            db::store::insert_rows(conn, std::slice::from_ref(&new_repo))?;
         }
 
         Granularity::All => {
@@ -391,13 +395,11 @@ fn try_delta_analyze(
 
             let new_repo = aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
 
-            let tx = conn.unchecked_transaction()?;
-            db::store::copy_file_rows_from_parent(&tx, repo_name, &parent, commit_sha, commit_date, &exclude_paths)?;
-            db::store::insert_rows(&tx, &added)?;
-            db::store::copy_folder_rows_from_parent(&tx, repo_name, &parent, commit_sha, commit_date, &affected_vec)?;
-            db::store::insert_rows(&tx, &new_folder_rows)?;
-            db::store::insert_rows(&tx, std::slice::from_ref(&new_repo))?;
-            tx.commit()?;
+            db::store::copy_file_rows_from_parent(conn, repo_name, &parent, commit_sha, commit_date, &exclude_paths)?;
+            db::store::insert_rows(conn, &added)?;
+            db::store::copy_folder_rows_from_parent(conn, repo_name, &parent, commit_sha, commit_date, &affected_vec)?;
+            db::store::insert_rows(conn, &new_folder_rows)?;
+            db::store::insert_rows(conn, std::slice::from_ref(&new_repo))?;
         }
     }
 
