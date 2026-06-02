@@ -3,6 +3,7 @@ mod analyzers;
 mod cli;
 mod db;
 mod git;
+mod github;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -18,6 +19,8 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Analyze(args) => run_analyze(args),
+        Commands::Prs(args) => run_prs(args),
+        Commands::Status(args) => run_status(args),
     }
 }
 
@@ -404,6 +407,264 @@ fn try_delta_analyze(
     }
 
     Ok(true)
+}
+
+fn run_status(args: cli::StatusArgs) -> Result<()> {
+    let repo = git::open(&args.repo_path)?;
+    let conn = db::open(&args.db)?;
+    db::schema::ensure(&conn)?;
+
+    let since = args.since.as_deref().map(parse_since_date).transpose()?;
+    let commits = git::all_commits(&repo, &args.commit, since)?;
+    let in_db = db::store::committed_shas(&conn, &args.repo)?;
+
+    let total = commits.len();
+    let loaded = commits.iter().filter(|(sha, _)| in_db.contains(sha)).count();
+    let missing = total - loaded;
+
+    eprintln!("{}", args.repo);
+    eprintln!("  commits in git history: {}", total);
+    eprintln!("  loaded in db:           {}", loaded);
+    eprintln!("  missing:                {}", missing);
+
+    if total > 0 {
+        let pct = loaded as f64 / total as f64 * 100.0;
+        eprintln!("  coverage:               {:.1}%", pct);
+    }
+
+    if let (Some(oldest), Some(newest)) = (commits.first(), commits.last()) {
+        let oldest_date = &oldest.1;
+        let newest_date = &newest.1;
+        eprintln!("  date range (git):       {} .. {}", &oldest_date[..10], &newest_date[..10]);
+    }
+
+    let loaded_commits: Vec<&(String, String)> = commits.iter().filter(|(sha, _)| in_db.contains(sha)).collect();
+    if let (Some(oldest), Some(newest)) = (loaded_commits.first(), loaded_commits.last()) {
+        eprintln!("  date range (db):        {} .. {}", &oldest.1[..10], &newest.1[..10]);
+    }
+
+    if missing > 0 {
+        let missing_commits: Vec<&(String, String)> = commits.iter().filter(|(sha, _)| !in_db.contains(sha)).collect();
+        let show = missing_commits.len().min(10);
+        eprintln!("\n  oldest missing commits:");
+        for (sha, date) in &missing_commits[..show] {
+            eprintln!("    {} {}", &sha[..8], &date[..10]);
+        }
+        if missing_commits.len() > show {
+            eprintln!("    ... and {} more", missing_commits.len() - show);
+        }
+    }
+
+    Ok(())
+}
+
+fn run_prs(args: cli::PrsArgs) -> Result<()> {
+    let conn = db::open(&args.db)?;
+    db::schema::ensure_pr_tables(&conn)?;
+
+    let client = github::GitHubClient::new(&args.token, &args.repo)?;
+
+    let (remaining, limit) = client.rate_limit_remaining()?;
+    eprintln!("GitHub API rate limit: {}/{} remaining", remaining, limit);
+
+    let since_str = args.since.as_deref();
+    eprintln!("{}: Fetching pull requests...", args.repo);
+    let pulls = client.list_pulls(since_str)?;
+    eprintln!("{}: Found {} pull requests", args.repo, pulls.len());
+
+    let wall_start = std::time::Instant::now();
+    let mut fetched = 0usize;
+    let mut skipped = 0usize;
+
+    conn.execute_batch("BEGIN")?;
+
+    for (i, pr) in pulls.iter().enumerate() {
+        if let Some(db_updated) = db::pr_store::pr_updated_at(&conn, &args.repo, pr.number)? {
+            if db_updated == pr.updated_at {
+                skipped += 1;
+                continue;
+            }
+        }
+
+        let title_preview: String = pr.title.chars().take(60).collect();
+        eprintln!(
+            "[{}/{}] PR #{}: {}",
+            i + 1,
+            pulls.len(),
+            pr.number,
+            title_preview
+        );
+
+        let detail = client.get_pull(pr.number)?;
+
+        let pr_row = db::pr_store::PullRequestRow {
+            repo: args.repo.clone(),
+            pr_number: detail.number,
+            title: detail.title,
+            author: detail.user.login,
+            state: detail.state.clone(),
+            draft: detail.draft.unwrap_or(false),
+            created_at: detail.created_at,
+            updated_at: detail.updated_at,
+            merged_at: detail.merged_at,
+            closed_at: detail.closed_at,
+            merged: detail.merged.unwrap_or(false),
+            additions: detail.additions,
+            deletions: detail.deletions,
+            changed_files: detail.changed_files,
+            base_ref: Some(detail.base.ref_name),
+            head_ref: Some(detail.head.ref_name),
+        };
+        db::pr_store::upsert_pull_request(&conn, &pr_row)?;
+
+        let reviews = client.list_reviews(pr.number)?;
+        for review in &reviews {
+            if let (Some(user), Some(submitted_at)) = (&review.user, &review.submitted_at) {
+                let review_row = db::pr_store::ReviewRow {
+                    repo: args.repo.clone(),
+                    pr_number: pr.number,
+                    review_id: review.id,
+                    reviewer: user.login.clone(),
+                    state: review.state.clone(),
+                    submitted_at: submitted_at.clone(),
+                };
+                db::pr_store::upsert_review(&conn, &review_row)?;
+            }
+        }
+
+        if pr.state == "open" {
+            let requested = client.list_requested_reviewers(pr.number)?;
+            let mut reviewer_rows: Vec<db::pr_store::RequestedReviewerRow> = Vec::new();
+            for user in &requested.users {
+                reviewer_rows.push(db::pr_store::RequestedReviewerRow {
+                    repo: args.repo.clone(),
+                    pr_number: pr.number,
+                    reviewer: user.login.clone(),
+                    reviewer_type: "user".to_string(),
+                });
+            }
+            for team in &requested.teams {
+                reviewer_rows.push(db::pr_store::RequestedReviewerRow {
+                    repo: args.repo.clone(),
+                    pr_number: pr.number,
+                    reviewer: team.slug.clone(),
+                    reviewer_type: "team".to_string(),
+                });
+            }
+            db::pr_store::replace_requested_reviewers(
+                &conn,
+                &args.repo,
+                pr.number,
+                &reviewer_rows,
+            )?;
+        }
+
+        fetched += 1;
+        if fetched % 100 == 0 {
+            conn.execute_batch("COMMIT; BEGIN")?;
+        }
+    }
+
+    conn.execute_batch("COMMIT")?;
+
+    let elapsed = wall_start.elapsed().as_secs_f64();
+    let elapsed_str = if elapsed < 60.0 {
+        format!("{:.1}s", elapsed)
+    } else {
+        format!("{:.1}m", elapsed / 60.0)
+    };
+    eprintln!(
+        "Done: {} fetched, {} skipped (unchanged), took {}",
+        fetched, skipped, elapsed_str
+    );
+
+    print_pr_summary(&conn, &args.repo)?;
+
+    Ok(())
+}
+
+fn print_pr_summary(conn: &rusqlite::Connection, repo: &str) -> Result<()> {
+    use rusqlite::params;
+
+    eprintln!("\n--- PR Authors (merged, top 15) ---");
+    let mut stmt = conn.prepare(
+        "SELECT author, COUNT(*) AS cnt
+         FROM pull_requests WHERE repo = ?1 AND merged = 1
+         GROUP BY author ORDER BY cnt DESC LIMIT 15",
+    )?;
+    let rows = stmt.query_map(params![repo], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    for row in rows {
+        let (author, count) = row?;
+        eprintln!("  {:>5}  {}", count, author);
+    }
+
+    eprintln!("\n--- PR Reviewers (top 15) ---");
+    let mut stmt = conn.prepare(
+        "SELECT reviewer, COUNT(DISTINCT pr_number) AS cnt
+         FROM pr_reviews WHERE repo = ?1 AND state IN ('APPROVED', 'CHANGES_REQUESTED', 'COMMENTED')
+         GROUP BY reviewer ORDER BY cnt DESC LIMIT 15",
+    )?;
+    let rows = stmt.query_map(params![repo], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    for row in rows {
+        let (reviewer, count) = row?;
+        eprintln!("  {:>5}  {}", count, reviewer);
+    }
+
+    eprintln!("\n--- Review Balance (reviews / authored, merged PRs) ---");
+    eprintln!("  {:>5}  {:>5}  {:>6}  {}", "auth", "revw", "ratio", "person");
+    let mut stmt = conn.prepare(
+        "WITH people AS (
+            SELECT author AS person FROM pull_requests WHERE repo = ?1 AND merged = 1
+            UNION
+            SELECT reviewer AS person FROM pr_reviews WHERE repo = ?1
+         ),
+         authors AS (
+            SELECT author AS person, COUNT(*) AS authored
+            FROM pull_requests WHERE repo = ?1 AND merged = 1
+            GROUP BY author
+         ),
+         reviewers AS (
+            SELECT reviewer AS person, COUNT(DISTINCT pr_number) AS reviewed
+            FROM pr_reviews
+            WHERE repo = ?1 AND state IN ('APPROVED', 'CHANGES_REQUESTED')
+            GROUP BY reviewer
+         )
+         SELECT
+            p.person,
+            COALESCE(a.authored, 0) AS authored,
+            COALESCE(r.reviewed, 0) AS reviewed,
+            CASE
+                WHEN COALESCE(a.authored, 0) = 0 THEN NULL
+                ELSE ROUND(CAST(COALESCE(r.reviewed, 0) AS REAL) / a.authored, 2)
+            END AS ratio
+         FROM people p
+         LEFT JOIN authors a ON p.person = a.person
+         LEFT JOIN reviewers r ON p.person = r.person
+         WHERE COALESCE(a.authored, 0) > 0 OR COALESCE(r.reviewed, 0) > 0
+         ORDER BY ratio ASC NULLS LAST",
+    )?;
+    let rows = stmt.query_map(params![repo], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, Option<f64>>(3)?,
+        ))
+    })?;
+    for row in rows {
+        let (person, authored, reviewed, ratio) = row?;
+        let ratio_str = match ratio {
+            Some(r) => format!("{:.2}", r),
+            None => "  -".to_string(),
+        };
+        eprintln!("  {:>5}  {:>5}  {:>6}  {}", authored, reviewed, ratio_str, person);
+    }
+
+    Ok(())
 }
 
 fn parse_since_date(s: &str) -> Result<chrono::DateTime<chrono::Utc>> {

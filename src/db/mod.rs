@@ -1,3 +1,4 @@
+pub mod pr_store;
 pub mod schema;
 pub mod store;
 

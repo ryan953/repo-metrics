@@ -233,6 +233,18 @@ pub fn copy_folder_rows_from_parent(
     Ok(())
 }
 
+pub fn committed_shas(conn: &Connection, repo: &str) -> Result<std::collections::HashSet<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT commit_sha FROM stats WHERE repo = ?1 AND row_type = 'repo'",
+    )?;
+    let rows = stmt.query_map(params![repo], |row| row.get::<_, String>(0))?;
+    let mut set = std::collections::HashSet::new();
+    for r in rows {
+        set.insert(r?);
+    }
+    Ok(set)
+}
+
 pub fn insert_rows(conn: &Connection, rows: &[StatRow]) -> Result<()> {
     let mut stmt = conn.prepare_cached(
         "INSERT INTO stats

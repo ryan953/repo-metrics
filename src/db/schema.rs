@@ -80,3 +80,57 @@ pub fn drop_unique_index(conn: &Connection) -> Result<()> {
     conn.execute_batch("DROP INDEX IF EXISTS idx_stats_unique;")?;
     Ok(())
 }
+
+pub fn ensure_pr_tables(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS pull_requests (
+            id              INTEGER PRIMARY KEY,
+            repo            TEXT    NOT NULL,
+            pr_number       INTEGER NOT NULL,
+            title           TEXT    NOT NULL,
+            author          TEXT    NOT NULL,
+            state           TEXT    NOT NULL,
+            draft           INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT    NOT NULL,
+            updated_at      TEXT    NOT NULL,
+            merged_at       TEXT,
+            closed_at       TEXT,
+            merged          INTEGER NOT NULL DEFAULT 0,
+            additions       INTEGER,
+            deletions       INTEGER,
+            changed_files   INTEGER,
+            base_ref        TEXT,
+            head_ref        TEXT,
+            UNIQUE(repo, pr_number)
+        );
+
+        CREATE TABLE IF NOT EXISTS pr_reviews (
+            id              INTEGER PRIMARY KEY,
+            repo            TEXT    NOT NULL,
+            pr_number       INTEGER NOT NULL,
+            review_id       INTEGER NOT NULL,
+            reviewer        TEXT    NOT NULL,
+            state           TEXT    NOT NULL,
+            submitted_at    TEXT    NOT NULL,
+            UNIQUE(repo, pr_number, review_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS pr_reviewers_requested (
+            id              INTEGER PRIMARY KEY,
+            repo            TEXT    NOT NULL,
+            pr_number       INTEGER NOT NULL,
+            reviewer        TEXT    NOT NULL,
+            reviewer_type   TEXT    NOT NULL DEFAULT 'user',
+            UNIQUE(repo, pr_number, reviewer)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pr_repo_author
+            ON pull_requests(repo, author);
+        CREATE INDEX IF NOT EXISTS idx_pr_repo_created
+            ON pull_requests(repo, created_at);
+        CREATE INDEX IF NOT EXISTS idx_pr_reviews_repo_reviewer
+            ON pr_reviews(repo, reviewer);
+        ",
+    )?;
+    Ok(())
+}
