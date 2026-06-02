@@ -5,6 +5,7 @@ use rusqlite::{params, Connection, Row};
 pub struct StatRow {
     pub repo: String,
     pub commit_sha: String,
+    pub parent_sha: Option<String>,
     pub commit_date: String,
     pub row_type: String, // "file" | "folder" | "repo"
     pub folder: String,
@@ -39,7 +40,7 @@ pub struct StatRow {
 }
 
 const SELECT_COLS: &str =
-    "repo, commit_sha, commit_date, row_type, folder, folder_depth, file_name,
+    "repo, commit_sha, parent_sha, commit_date, row_type, folder, folder_depth, file_name,
      file_count, sloc_nonblank, sloc_noncomment,
      file_type, source_file_count, test_file_count, story_file_count, config_file_count,
      js_exports_default, js_exports_named, js_exports_total, js_export_matches_filename,
@@ -50,33 +51,34 @@ fn row_from_sql(row: &Row<'_>) -> rusqlite::Result<StatRow> {
     Ok(StatRow {
         repo: row.get(0)?,
         commit_sha: row.get(1)?,
-        commit_date: row.get(2)?,
-        row_type: row.get(3)?,
-        folder: row.get(4)?,
-        folder_depth: row.get(5)?,
-        file_name: row.get(6)?,
-        file_count: row.get(7)?,
-        sloc_nonblank: row.get(8)?,
-        sloc_noncomment: row.get(9)?,
-        file_type: row.get(10)?,
-        source_file_count: row.get(11)?,
-        test_file_count: row.get(12)?,
-        story_file_count: row.get(13)?,
-        config_file_count: row.get(14)?,
-        js_exports_default: row.get(15)?,
-        js_exports_named: row.get(16)?,
-        js_exports_total: row.get(17)?,
-        js_export_matches_filename: row.get(18)?,
-        py_file_count: row.get(19)?,
-        js_file_count: row.get(20)?,
-        jsx_file_count: row.get(21)?,
-        ts_file_count: row.get(22)?,
-        tsx_file_count: row.get(23)?,
-        css_file_count: row.get(24)?,
-        html_file_count: row.get(25)?,
-        md_file_count: row.get(26)?,
-        json_file_count: row.get(27)?,
-        yaml_file_count: row.get(28)?,
+        parent_sha: row.get(2)?,
+        commit_date: row.get(3)?,
+        row_type: row.get(4)?,
+        folder: row.get(5)?,
+        folder_depth: row.get(6)?,
+        file_name: row.get(7)?,
+        file_count: row.get(8)?,
+        sloc_nonblank: row.get(9)?,
+        sloc_noncomment: row.get(10)?,
+        file_type: row.get(11)?,
+        source_file_count: row.get(12)?,
+        test_file_count: row.get(13)?,
+        story_file_count: row.get(14)?,
+        config_file_count: row.get(15)?,
+        js_exports_default: row.get(16)?,
+        js_exports_named: row.get(17)?,
+        js_exports_total: row.get(18)?,
+        js_export_matches_filename: row.get(19)?,
+        py_file_count: row.get(20)?,
+        js_file_count: row.get(21)?,
+        jsx_file_count: row.get(22)?,
+        ts_file_count: row.get(23)?,
+        tsx_file_count: row.get(24)?,
+        css_file_count: row.get(25)?,
+        html_file_count: row.get(26)?,
+        md_file_count: row.get(27)?,
+        json_file_count: row.get(28)?,
+        yaml_file_count: row.get(29)?,
     })
 }
 
@@ -157,7 +159,7 @@ pub fn copy_file_rows_from_parent(
     let not_in_clause = if exclude_paths.is_empty() {
         String::new()
     } else {
-        let placeholders = (5..5 + exclude_paths.len())
+        let placeholders = (6..6 + exclude_paths.len())
             .map(|i| format!("?{}", i))
             .collect::<Vec<_>>()
             .join(", ");
@@ -165,7 +167,7 @@ pub fn copy_file_rows_from_parent(
     };
     let sql = format!(
         "INSERT INTO stats ({cols})
-         SELECT repo, ?2, ?3, row_type, folder, folder_depth, file_name,
+         SELECT repo, ?2, ?5, ?3, row_type, folder, folder_depth, file_name,
                 file_count, sloc_nonblank, sloc_noncomment,
                 file_type, source_file_count, test_file_count, story_file_count, config_file_count,
                 js_exports_default, js_exports_named, js_exports_total, js_export_matches_filename,
@@ -180,6 +182,7 @@ pub fn copy_file_rows_from_parent(
         repo.to_string().into(),
         to_sha.to_string().into(),
         to_date.to_string().into(),
+        from_sha.to_string().into(),
         from_sha.to_string().into(),
     ];
     for p in exclude_paths {
@@ -201,7 +204,7 @@ pub fn copy_folder_rows_from_parent(
     let not_in_clause = if exclude_folders.is_empty() {
         String::new()
     } else {
-        let placeholders = (5..5 + exclude_folders.len())
+        let placeholders = (6..6 + exclude_folders.len())
             .map(|i| format!("?{}", i))
             .collect::<Vec<_>>()
             .join(", ");
@@ -209,7 +212,7 @@ pub fn copy_folder_rows_from_parent(
     };
     let sql = format!(
         "INSERT INTO stats ({cols})
-         SELECT repo, ?2, ?3, row_type, folder, folder_depth, file_name,
+         SELECT repo, ?2, ?5, ?3, row_type, folder, folder_depth, file_name,
                 file_count, sloc_nonblank, sloc_noncomment,
                 file_type, source_file_count, test_file_count, story_file_count, config_file_count,
                 js_exports_default, js_exports_named, js_exports_total, js_export_matches_filename,
@@ -224,6 +227,7 @@ pub fn copy_folder_rows_from_parent(
         repo.to_string().into(),
         to_sha.to_string().into(),
         to_date.to_string().into(),
+        from_sha.to_string().into(),
         from_sha.to_string().into(),
     ];
     for f in exclude_folders {
@@ -248,25 +252,26 @@ pub fn committed_shas(conn: &Connection, repo: &str) -> Result<std::collections:
 pub fn insert_rows(conn: &Connection, rows: &[StatRow]) -> Result<()> {
     let mut stmt = conn.prepare_cached(
         "INSERT INTO stats
-            (repo, commit_sha, commit_date, row_type, folder, folder_depth, file_name,
+            (repo, commit_sha, parent_sha, commit_date, row_type, folder, folder_depth, file_name,
              file_count, sloc_nonblank, sloc_noncomment,
              file_type, source_file_count, test_file_count, story_file_count, config_file_count,
              js_exports_default, js_exports_named, js_exports_total, js_export_matches_filename,
              py_file_count, js_file_count, jsx_file_count, ts_file_count, tsx_file_count,
              css_file_count, html_file_count, md_file_count, json_file_count, yaml_file_count)
          VALUES
-            (?1, ?2, ?3, ?4, ?5, ?6, ?7,
-             ?8, ?9, ?10,
-             ?11, ?12, ?13, ?14, ?15,
-             ?16, ?17, ?18, ?19,
-             ?20, ?21, ?22, ?23, ?24,
-             ?25, ?26, ?27, ?28, ?29)",
+            (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+             ?9, ?10, ?11,
+             ?12, ?13, ?14, ?15, ?16,
+             ?17, ?18, ?19, ?20,
+             ?21, ?22, ?23, ?24, ?25,
+             ?26, ?27, ?28, ?29, ?30)",
     )?;
 
     for row in rows {
         stmt.execute(params![
             row.repo,
             row.commit_sha,
+            row.parent_sha,
             row.commit_date,
             row.row_type,
             row.folder,

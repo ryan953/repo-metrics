@@ -101,6 +101,9 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
                 }
             };
 
+            let parent = git::parent_sha(&repo, commit_sha).ok().flatten();
+            let parent_ref = parent.as_deref();
+
             let mut file_rows = Vec::with_capacity(file_entries.len());
             for entry in &file_entries {
                 let mut stats = analyzers::FileStats::default();
@@ -109,12 +112,12 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
                         analyzer.analyze(&entry.path, &entry.content, &mut stats);
                     }
                 }
-                file_rows.push(build_file_row(&args.repo, commit_sha, commit_date, &entry.path, stats));
+                file_rows.push(build_file_row(&args.repo, commit_sha, parent_ref, commit_date, &entry.path, stats));
             }
 
             let folder_rows = aggregator::aggregate_to_folders(&file_rows);
             let repo_row =
-                aggregator::aggregate_to_repo(&args.repo, commit_sha, commit_date, &file_rows);
+                aggregator::aggregate_to_repo(&args.repo, commit_sha, parent_ref, commit_date, &file_rows);
 
             match args.granularity {
                 Granularity::All => {
@@ -198,7 +201,7 @@ fn try_delta_analyze(
                         analyzer.analyze(old_path, &content, &mut stats);
                     }
                 }
-                removed.push(build_file_row(repo_name, &parent, "", old_path, stats));
+                removed.push(build_file_row(repo_name, &parent, None, "", old_path, stats));
             }
         }
         if let Some(new_path) = &diff.new_path {
@@ -209,7 +212,7 @@ fn try_delta_analyze(
                         analyzer.analyze(new_path, &content, &mut stats);
                     }
                 }
-                added.push(build_file_row(repo_name, commit_sha, commit_date, new_path, stats));
+                added.push(build_file_row(repo_name, commit_sha, Some(&parent), commit_date, new_path, stats));
             }
         }
     }
@@ -220,7 +223,7 @@ fn try_delta_analyze(
                 Some(r) => r,
                 None => return Ok(false),
             };
-            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
+            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, Some(&parent), commit_date, &removed, &added);
             db::store::insert_rows(conn, std::slice::from_ref(&new_repo))?;
         }
 
@@ -267,6 +270,7 @@ fn try_delta_analyze(
                 folder_map.entry(folder.clone()).or_insert_with(|| db::store::StatRow {
                     repo: repo_name.to_string(),
                     commit_sha: parent.clone(),
+                    parent_sha: None,
                     commit_date: String::new(),
                     row_type: "folder".to_string(),
                     folder: folder.clone(),
@@ -305,13 +309,13 @@ fn try_delta_analyze(
                 let folder_added: Vec<_> =
                     added.iter().filter(|r| r.folder == folder).cloned().collect();
                 let updated =
-                    aggregator::apply_delta(base, commit_sha, commit_date, &folder_removed, &folder_added);
+                    aggregator::apply_delta(base, commit_sha, Some(&parent), commit_date, &folder_removed, &folder_added);
                 if updated.file_count > 0 {
                     new_folder_rows.push(updated);
                 }
             }
 
-            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
+            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, Some(&parent), commit_date, &removed, &added);
 
             db::store::copy_folder_rows_from_parent(conn, repo_name, &parent, commit_sha, commit_date, &affected_vec)?;
             db::store::insert_rows(conn, &new_folder_rows)?;
@@ -353,6 +357,7 @@ fn try_delta_analyze(
                 folder_map.entry(folder.clone()).or_insert_with(|| db::store::StatRow {
                     repo: repo_name.to_string(),
                     commit_sha: parent.clone(),
+                    parent_sha: None,
                     commit_date: String::new(),
                     row_type: "folder".to_string(),
                     folder: folder.clone(),
@@ -390,13 +395,13 @@ fn try_delta_analyze(
                 let folder_added: Vec<_> =
                     added.iter().filter(|r| r.folder == folder).cloned().collect();
                 let updated =
-                    aggregator::apply_delta(base, commit_sha, commit_date, &folder_removed, &folder_added);
+                    aggregator::apply_delta(base, commit_sha, Some(&parent), commit_date, &folder_removed, &folder_added);
                 if updated.file_count > 0 {
                     new_folder_rows.push(updated);
                 }
             }
 
-            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
+            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, Some(&parent), commit_date, &removed, &added);
 
             db::store::copy_file_rows_from_parent(conn, repo_name, &parent, commit_sha, commit_date, &exclude_paths)?;
             db::store::insert_rows(conn, &added)?;
@@ -648,6 +653,7 @@ fn parse_since_date(s: &str) -> Result<chrono::DateTime<chrono::Utc>> {
 fn build_file_row(
     repo: &str,
     commit_sha: &str,
+    parent_sha: Option<&str>,
     commit_date: &str,
     path: &str,
     stats: analyzers::FileStats,
@@ -676,6 +682,7 @@ fn build_file_row(
     db::store::StatRow {
         repo: repo.to_string(),
         commit_sha: commit_sha.to_string(),
+        parent_sha: parent_sha.map(|s| s.to_string()),
         commit_date: commit_date.to_string(),
         row_type: "file".to_string(),
         folder,

@@ -7,6 +7,7 @@ pub fn ensure(conn: &Connection) -> Result<()> {
             id              INTEGER PRIMARY KEY,
             repo            TEXT    NOT NULL,
             commit_sha      TEXT    NOT NULL,
+            parent_sha      TEXT,
             commit_date     TEXT    NOT NULL,
 
             -- Row type: 'file' | 'folder' | 'repo'
@@ -61,8 +62,19 @@ pub fn ensure(conn: &Connection) -> Result<()> {
             ON stats(repo, commit_sha, row_type);
         ",
     )?;
+    migrate_add_parent_sha(conn)?;
     // Unique index is managed separately so it can be deferred during bulk loads.
     ensure_unique_index(conn)?;
+    Ok(())
+}
+
+fn migrate_add_parent_sha(conn: &Connection) -> Result<()> {
+    let has_col: bool = conn
+        .prepare("SELECT parent_sha FROM stats LIMIT 0")
+        .is_ok();
+    if !has_col {
+        conn.execute_batch("ALTER TABLE stats ADD COLUMN parent_sha TEXT;")?;
+    }
     Ok(())
 }
 
