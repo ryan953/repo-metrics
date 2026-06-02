@@ -1,6 +1,6 @@
 # repo-metrics
 
-A CLI tool that walks a git repository's full commit history and collects per-file, per-folder, and repo-wide statistics into a SQLite database for analysis over time.
+A CLI tool that collects git repository statistics into a SQLite database for analysis over time. Walks commit history for per-file, per-folder, and repo-wide code metrics, and fetches pull request data from the GitHub API to track authors and reviewers.
 
 ## Building
 
@@ -16,7 +16,13 @@ cargo build --release
 
 The binary is written to `target/debug/repo-metrics` or `target/release/repo-metrics`.
 
-## Usage
+## Commands
+
+- **`analyze`** — Walk git commit history and collect code metrics (SLOC, file types, exports)
+- **`prs`** — Fetch pull request authors, reviewers, and review activity from the GitHub API
+- **`status`** — Show how many commits from git history are loaded in the database
+
+## `analyze`
 
 ```
 repo-metrics analyze <REPO_PATH> --repo <ORG/REPO> [OPTIONS]
@@ -84,9 +90,70 @@ nohup repo-metrics analyze ~/code/sentry --repo getsentry/sentry --db sentry.db 
 tail -f metrics.log
 ```
 
+## `prs`
+
+```
+repo-metrics prs --repo <ORG/REPO> --token <TOKEN> [OPTIONS]
+```
+
+Fetches pull request data from the GitHub REST API and stores it in the database. For each PR, fetches full details (additions/deletions/changed files), all submitted reviews, and requested reviewers (for open PRs). Prints a summary of top authors, top reviewers, and a review-vs-authored ratio.
+
+### Options
+
+| Option                 | Default           | Description                                                              |
+|------------------------|-------------------|--------------------------------------------------------------------------|
+| `--repo <ORG/REPO>`    | *(required)*      | Repository identity in `org/repo` format (e.g. `getsentry/sentry`).     |
+| `--token <TOKEN>`      | *(required)*      | GitHub personal access token. Also reads `GITHUB_TOKEN` env var.         |
+| `--db <PATH>`          | `repo-metrics.db` | Path to the SQLite database file.                                        |
+| `--since <YYYY-MM-DD>` | *(none)*          | Only fetch PRs created on or after this date. Omit to fetch all PRs.     |
+
+### Examples
+
+Fetch PRs from the last year:
+```bash
+repo-metrics prs --repo getsentry/sentry --since 2025-01-01
+```
+
+Use an env var for the token:
+```bash
+export GITHUB_TOKEN=$(gh auth token)
+repo-metrics prs --repo getsentry/sentry --since 2025-01-01
+```
+
+Re-running is incremental — PRs whose `updated_at` hasn't changed are skipped.
+
+### Rate limits
+
+Each PR requires 2–3 GitHub API calls (detail + reviews + requested reviewers for open PRs). The tool reports remaining rate limit at startup. Use `--since` to control scope for large repos.
+
+## `status`
+
+```
+repo-metrics status <REPO_PATH> --repo <ORG/REPO> [OPTIONS]
+```
+
+Compares the commit history in a local git repo against what's loaded in the database. Reports total commits, loaded count, missing count, coverage percentage, and date ranges.
+
+### Options
+
+| Option                 | Default           | Description                              |
+|------------------------|-------------------|------------------------------------------|
+| `--repo <ORG/REPO>`    | *(required)*      | Repository identity in `org/repo` format.|
+| `--commit <REF>`       | `HEAD`            | Tip of the commit walk.                  |
+| `--db <PATH>`          | `repo-metrics.db` | Path to the SQLite database file.        |
+| `--since <YYYY-MM-DD>` | *(none)*          | Oldest commit date to include.           |
+
+### Example
+
+```bash
+repo-metrics status ~/code/sentry --repo getsentry/sentry --db sentry.db
+```
+
 ## Database schema
 
-All stats are written to a single `stats` table in the SQLite database. Each analyzed commit produces three tiers of rows:
+### `stats` table
+
+Written by the `analyze` command. Each analyzed commit produces three tiers of rows:
 
 | `row_type` | `folder`         | `file_name`                 | Represents                                      |
 |------------|------------------|-----------------------------|-------------------------------------------------|
@@ -94,7 +161,7 @@ All stats are written to a single `stats` table in the SQLite database. Each ana
 | `folder`   | `src/components` | *(NULL)*                    | Aggregate for all files directly in that folder |
 | `repo`     | `.`              | *(NULL)*                    | Aggregate for the entire repo                   |
 
-### Columns
+#### Columns
 
 | Column                       | Type | Description                                                                                                            |
 |------------------------------|------|------------------------------------------------------------------------------------------------------------------------|
@@ -118,7 +185,7 @@ All stats are written to a single `stats` table in the SQLite database. Each ana
 | `js_exports_total`           | INT  | `js_exports_default + js_exports_named`; NULL for non-JS/TS files                                                      |
 | `js_export_matches_filename` | INT  | `1` if any export's public name matches the file stem (case-insensitive); `0` otherwise. Pre-summed on aggregate rows. |
 
-### File type classification (JS/TS only)
+#### File type classification (JS/TS only)
 
 | `file_type` | Matched by                                                                                          |
 |-------------|-----------------------------------------------------------------------------------------------------|
@@ -126,6 +193,53 @@ All stats are written to a single `stats` table in the SQLite database. Each ana
 | `story`     | `*.stories.*`, `*.story.*`                                                                          |
 | `config`    | `*.config.*`, known config filenames (`jest.config.ts`, `vite.config.ts`, `eslint.config.js`, etc.) |
 | `source`    | All other JS/TS files                                                                               |
+
+### `pull_requests` table
+
+Written by the `prs` command. One row per PR.
+
+| Column          | Type | Description                                    |
+|-----------------|------|------------------------------------------------|
+| `repo`          | TEXT | Repository identity (`org/repo`)               |
+| `pr_number`     | INT  | Pull request number                            |
+| `title`         | TEXT | PR title                                       |
+| `author`        | TEXT | GitHub login of the PR author                  |
+| `state`         | TEXT | `open` or `closed`                             |
+| `draft`         | INT  | `1` if the PR is a draft                       |
+| `created_at`    | TEXT | ISO 8601 timestamp                             |
+| `updated_at`    | TEXT | ISO 8601 timestamp                             |
+| `merged_at`     | TEXT | ISO 8601 timestamp; NULL if not merged         |
+| `closed_at`     | TEXT | ISO 8601 timestamp; NULL if still open         |
+| `merged`        | INT  | `1` if the PR was merged                       |
+| `additions`     | INT  | Lines added                                    |
+| `deletions`     | INT  | Lines deleted                                  |
+| `changed_files` | INT  | Number of files changed                        |
+| `base_ref`      | TEXT | Target branch (e.g. `main`)                    |
+| `head_ref`      | TEXT | Source branch                                  |
+
+### `pr_reviews` table
+
+One row per submitted review.
+
+| Column         | Type | Description                                                  |
+|----------------|------|--------------------------------------------------------------|
+| `repo`         | TEXT | Repository identity                                          |
+| `pr_number`    | INT  | Pull request number                                          |
+| `review_id`    | INT  | GitHub review ID                                             |
+| `reviewer`     | TEXT | GitHub login of the reviewer                                 |
+| `state`        | TEXT | `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, or `DISMISSED` |
+| `submitted_at` | TEXT | ISO 8601 timestamp                                           |
+
+### `pr_reviewers_requested` table
+
+Currently-requested reviewers (people/teams who haven't submitted a review yet). Captured for open PRs only.
+
+| Column          | Type | Description               |
+|-----------------|------|---------------------------|
+| `repo`          | TEXT | Repository identity       |
+| `pr_number`     | INT  | Pull request number       |
+| `reviewer`      | TEXT | GitHub login or team slug |
+| `reviewer_type` | TEXT | `user` or `team`          |
 
 ### Example queries
 
@@ -162,4 +276,61 @@ SELECT commit_date, story_file_count
 FROM stats
 WHERE repo = 'getsentry/sentry' AND row_type = 'repo'
 ORDER BY commit_date;
+
+-- Top PR authors (merged PRs)
+SELECT author, COUNT(*) AS prs
+FROM pull_requests
+WHERE repo = 'getsentry/sentry' AND merged = 1
+GROUP BY author ORDER BY prs DESC LIMIT 15;
+
+-- Top reviewers by distinct PRs reviewed
+SELECT reviewer, COUNT(DISTINCT pr_number) AS prs_reviewed
+FROM pr_reviews
+WHERE repo = 'getsentry/sentry' AND state IN ('APPROVED', 'CHANGES_REQUESTED')
+GROUP BY reviewer ORDER BY prs_reviewed DESC LIMIT 15;
+
+-- Review balance: ratio of PRs reviewed to PRs authored per person
+-- Low ratio = authors more than they review; high = net reviewer
+WITH people AS (
+    SELECT author AS person FROM pull_requests WHERE repo = 'getsentry/sentry' AND merged = 1
+    UNION
+    SELECT reviewer AS person FROM pr_reviews WHERE repo = 'getsentry/sentry'
+),
+authors AS (
+    SELECT author AS person, COUNT(*) AS authored
+    FROM pull_requests WHERE repo = 'getsentry/sentry' AND merged = 1
+    GROUP BY author
+),
+reviewers AS (
+    SELECT reviewer AS person, COUNT(DISTINCT pr_number) AS reviewed
+    FROM pr_reviews
+    WHERE repo = 'getsentry/sentry' AND state IN ('APPROVED', 'CHANGES_REQUESTED')
+    GROUP BY reviewer
+)
+SELECT
+    p.person,
+    COALESCE(a.authored, 0) AS prs_authored,
+    COALESCE(r.reviewed, 0) AS prs_reviewed,
+    ROUND(CAST(COALESCE(r.reviewed, 0) AS REAL) / NULLIF(a.authored, 0), 2) AS review_ratio
+FROM people p
+LEFT JOIN authors a ON p.person = a.person
+LEFT JOIN reviewers r ON p.person = r.person
+ORDER BY review_ratio ASC NULLS LAST;
+
+-- Average review turnaround time (hours from PR creation to first review)
+SELECT
+    pr.author,
+    COUNT(*) AS prs,
+    ROUND(AVG(
+        (julianday(first_review.submitted_at) - julianday(pr.created_at)) * 24
+    ), 1) AS avg_hours_to_first_review
+FROM pull_requests pr
+JOIN (
+    SELECT repo, pr_number, MIN(submitted_at) AS submitted_at
+    FROM pr_reviews
+    GROUP BY repo, pr_number
+) first_review ON pr.repo = first_review.repo AND pr.pr_number = first_review.pr_number
+WHERE pr.repo = 'getsentry/sentry' AND pr.merged = 1
+GROUP BY pr.author
+ORDER BY avg_hours_to_first_review DESC;
 ```
