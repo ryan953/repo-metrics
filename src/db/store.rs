@@ -126,7 +126,7 @@ pub fn get_folder_rows_for_folders(
         return Ok(vec![]);
     }
     let placeholders = (3..3 + folders.len())
-        .map(|i| format!("?{}", i + 1))
+        .map(|i| format!("?{}", i))
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
@@ -168,7 +168,9 @@ pub fn copy_file_rows_from_parent(
          SELECT repo, ?2, ?3, row_type, folder, folder_depth, file_name,
                 file_count, sloc_nonblank, sloc_noncomment,
                 file_type, source_file_count, test_file_count, story_file_count, config_file_count,
-                js_exports_default, js_exports_named, js_exports_total, js_export_matches_filename
+                js_exports_default, js_exports_named, js_exports_total, js_export_matches_filename,
+                py_file_count, js_file_count, jsx_file_count, ts_file_count, tsx_file_count,
+                css_file_count, html_file_count, md_file_count, json_file_count, yaml_file_count
          FROM stats
          WHERE repo = ?1 AND commit_sha = ?4 AND row_type = 'file'{not_in}",
         cols = SELECT_COLS,
@@ -210,7 +212,9 @@ pub fn copy_folder_rows_from_parent(
          SELECT repo, ?2, ?3, row_type, folder, folder_depth, file_name,
                 file_count, sloc_nonblank, sloc_noncomment,
                 file_type, source_file_count, test_file_count, story_file_count, config_file_count,
-                js_exports_default, js_exports_named, js_exports_total, js_export_matches_filename
+                js_exports_default, js_exports_named, js_exports_total, js_export_matches_filename,
+                py_file_count, js_file_count, jsx_file_count, ts_file_count, tsx_file_count,
+                css_file_count, html_file_count, md_file_count, json_file_count, yaml_file_count
          FROM stats
          WHERE repo = ?1 AND commit_sha = ?4 AND row_type = 'folder'{not_in}",
         cols = SELECT_COLS,
