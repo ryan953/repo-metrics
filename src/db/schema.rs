@@ -115,15 +115,6 @@ pub fn ensure_pr_tables(conn: &Connection) -> Result<()> {
             UNIQUE(repo, pr_number, review_id)
         );
 
-        CREATE TABLE IF NOT EXISTS pr_reviewers_requested (
-            id              INTEGER PRIMARY KEY,
-            repo            TEXT    NOT NULL,
-            pr_number       INTEGER NOT NULL,
-            reviewer        TEXT    NOT NULL,
-            reviewer_type   TEXT    NOT NULL DEFAULT 'user',
-            UNIQUE(repo, pr_number, reviewer)
-        );
-
         CREATE INDEX IF NOT EXISTS idx_pr_repo_author
             ON pull_requests(repo, author);
         CREATE INDEX IF NOT EXISTS idx_pr_repo_created

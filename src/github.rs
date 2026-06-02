@@ -45,17 +45,6 @@ pub struct Review {
     pub submitted_at: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct RequestedReviewers {
-    pub users: Vec<User>,
-    pub teams: Vec<Team>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct Team {
-    pub slug: String,
-}
-
 impl GitHubClient {
     pub fn new(token: &str, repo: &str) -> Result<Self> {
         let client = reqwest::blocking::Client::builder()
@@ -202,13 +191,4 @@ impl GitHubClient {
         Ok(all)
     }
 
-    pub fn list_requested_reviewers(&self, pr_number: i64) -> Result<RequestedReviewers> {
-        let url = format!(
-            "https://api.github.com/repos/{}/pulls/{}/requested_reviewers",
-            self.repo, pr_number
-        );
-        let resp = self.get(&url)?;
-        resp.json()
-            .context("failed to parse requested reviewers response")
-    }
 }

@@ -29,13 +29,6 @@ pub struct ReviewRow {
     pub submitted_at: String,
 }
 
-pub struct RequestedReviewerRow {
-    pub repo: String,
-    pub pr_number: i64,
-    pub reviewer: String,
-    pub reviewer_type: String,
-}
-
 pub fn upsert_pull_request(conn: &Connection, row: &PullRequestRow) -> Result<()> {
     conn.execute(
         "INSERT INTO pull_requests
@@ -97,26 +90,6 @@ pub fn upsert_review(conn: &Connection, row: &ReviewRow) -> Result<()> {
             row.submitted_at,
         ],
     )?;
-    Ok(())
-}
-
-pub fn replace_requested_reviewers(
-    conn: &Connection,
-    repo: &str,
-    pr_number: i64,
-    rows: &[RequestedReviewerRow],
-) -> Result<()> {
-    conn.execute(
-        "DELETE FROM pr_reviewers_requested WHERE repo = ?1 AND pr_number = ?2",
-        params![repo, pr_number],
-    )?;
-    let mut stmt = conn.prepare_cached(
-        "INSERT INTO pr_reviewers_requested (repo, pr_number, reviewer, reviewer_type)
-         VALUES (?1, ?2, ?3, ?4)",
-    )?;
-    for row in rows {
-        stmt.execute(params![row.repo, row.pr_number, row.reviewer, row.reviewer_type])?;
-    }
     Ok(())
 }
 

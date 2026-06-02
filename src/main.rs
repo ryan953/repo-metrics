@@ -531,33 +531,6 @@ fn run_prs(args: cli::PrsArgs) -> Result<()> {
             }
         }
 
-        if pr.state == "open" {
-            let requested = client.list_requested_reviewers(pr.number)?;
-            let mut reviewer_rows: Vec<db::pr_store::RequestedReviewerRow> = Vec::new();
-            for user in &requested.users {
-                reviewer_rows.push(db::pr_store::RequestedReviewerRow {
-                    repo: args.repo.clone(),
-                    pr_number: pr.number,
-                    reviewer: user.login.clone(),
-                    reviewer_type: "user".to_string(),
-                });
-            }
-            for team in &requested.teams {
-                reviewer_rows.push(db::pr_store::RequestedReviewerRow {
-                    repo: args.repo.clone(),
-                    pr_number: pr.number,
-                    reviewer: team.slug.clone(),
-                    reviewer_type: "team".to_string(),
-                });
-            }
-            db::pr_store::replace_requested_reviewers(
-                &conn,
-                &args.repo,
-                pr.number,
-                &reviewer_rows,
-            )?;
-        }
-
         fetched += 1;
         if fetched % 100 == 0 {
             conn.execute_batch("COMMIT; BEGIN")?;

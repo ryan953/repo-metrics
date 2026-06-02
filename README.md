@@ -230,17 +230,6 @@ One row per submitted review.
 | `state`        | TEXT | `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, or `DISMISSED` |
 | `submitted_at` | TEXT | ISO 8601 timestamp                                           |
 
-### `pr_reviewers_requested` table
-
-Currently-requested reviewers (people/teams who haven't submitted a review yet). Captured for open PRs only.
-
-| Column          | Type | Description               |
-|-----------------|------|---------------------------|
-| `repo`          | TEXT | Repository identity       |
-| `pr_number`     | INT  | Pull request number       |
-| `reviewer`      | TEXT | GitHub login or team slug |
-| `reviewer_type` | TEXT | `user` or `team`          |
-
 ### Example queries
 
 ```sql
