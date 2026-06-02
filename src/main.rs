@@ -412,7 +412,6 @@ fn try_delta_analyze(
 fn run_status(args: cli::StatusArgs) -> Result<()> {
     let repo = git::open(&args.repo_path)?;
     let conn = db::open(&args.db)?;
-    db::schema::ensure(&conn)?;
 
     let since = args.since.as_deref().map(parse_since_date).transpose()?;
     let commits = git::all_commits(&repo, &args.commit, since)?;
