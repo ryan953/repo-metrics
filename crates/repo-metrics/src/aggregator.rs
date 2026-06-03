@@ -10,9 +10,10 @@ pub fn aggregate_to_folders(file_rows: &[StatRow]) -> Vec<StatRow> {
     for row in file_rows {
         let agg = map.entry(row.folder.clone()).or_insert_with(|| StatRow {
             repo: row.repo.clone(),
-            commit_sha: row.commit_sha.clone(),
-            parent_sha: row.parent_sha.clone(),
-            commit_date: row.commit_date.clone(),
+            valid_from_sha: row.valid_from_sha.clone(),
+            valid_from_date: row.valid_from_date.clone(),
+            valid_to_sha: None,
+            valid_to_date: None,
             row_type: "folder".to_string(),
             folder: row.folder.clone(),
             folder_depth: row.folder_depth,
@@ -71,15 +72,15 @@ pub fn aggregate_to_folders(file_rows: &[StatRow]) -> Vec<StatRow> {
 pub fn aggregate_to_repo(
     repo: &str,
     commit_sha: &str,
-    parent_sha: Option<&str>,
     commit_date: &str,
     file_rows: &[StatRow],
 ) -> StatRow {
     let mut result = StatRow {
         repo: repo.to_string(),
-        commit_sha: commit_sha.to_string(),
-        parent_sha: parent_sha.map(|s| s.to_string()),
-        commit_date: commit_date.to_string(),
+        valid_from_sha: commit_sha.to_string(),
+        valid_from_date: commit_date.to_string(),
+        valid_to_sha: None,
+        valid_to_date: None,
         row_type: "repo".to_string(),
         folder: ".".to_string(),
         folder_depth: 0,
@@ -138,18 +139,19 @@ pub fn aggregate_to_repo(
 /// Applies an arithmetic delta to an aggregate row (folder or repo).
 ///
 /// Subtracts the stats from `removed` file rows and adds the stats from `added` file rows.
-/// Updates `commit_sha` and `commit_date` on the returned row.
+/// Updates `valid_from_sha` and `valid_from_date` on the returned row; `valid_to` is set to None
+/// (open-ended) since this is the new current version.
 pub fn apply_delta(
     mut base: StatRow,
     commit_sha: &str,
-    parent_sha: Option<&str>,
     commit_date: &str,
     removed: &[StatRow],
     added: &[StatRow],
 ) -> StatRow {
-    base.commit_sha = commit_sha.to_string();
-    base.parent_sha = parent_sha.map(|s| s.to_string());
-    base.commit_date = commit_date.to_string();
+    base.valid_from_sha = commit_sha.to_string();
+    base.valid_from_date = commit_date.to_string();
+    base.valid_to_sha = None;
+    base.valid_to_date = None;
     for r in removed {
         base.file_count -= r.file_count;
         base.sloc_nonblank -= r.sloc_nonblank;

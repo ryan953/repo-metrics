@@ -6,9 +6,12 @@ pub fn ensure(conn: &Connection) -> Result<()> {
         "CREATE TABLE IF NOT EXISTS stats (
             id              INTEGER PRIMARY KEY,
             repo            TEXT    NOT NULL,
-            commit_sha      TEXT    NOT NULL,
-            parent_sha      TEXT,
-            commit_date     TEXT    NOT NULL,
+
+            -- Validity range (SCD Type 2): the commit range where this row is current
+            valid_from_sha  TEXT    NOT NULL,
+            valid_from_date TEXT    NOT NULL,
+            valid_to_sha    TEXT,
+            valid_to_date   TEXT,
 
             -- Row type: 'file' | 'folder' | 'repo'
             row_type        TEXT    NOT NULL DEFAULT 'file',
@@ -57,24 +60,20 @@ pub fn ensure(conn: &Connection) -> Result<()> {
             yaml_file_count    INTEGER NOT NULL DEFAULT 0
         );
 
-        -- Lightweight index kept at all times for fast commit_exists lookups.
+        -- Index for range queries: find all rows valid at a given date
+        CREATE INDEX IF NOT EXISTS idx_stats_range
+            ON stats(repo, row_type, valid_from_date);
+
+        -- Index for finding current (open) rows for a file when closing them
+        CREATE INDEX IF NOT EXISTS idx_stats_current_file
+            ON stats(repo, row_type, file_name, valid_to_date);
+
+        -- Index for commit_exists lookups by valid_from_sha
         CREATE INDEX IF NOT EXISTS idx_commit_lookup
-            ON stats(repo, commit_sha, row_type);
+            ON stats(repo, valid_from_sha, row_type);
         ",
     )?;
-    migrate_add_parent_sha(conn)?;
-    // Unique index is managed separately so it can be deferred during bulk loads.
     ensure_unique_index(conn)?;
-    Ok(())
-}
-
-fn migrate_add_parent_sha(conn: &Connection) -> Result<()> {
-    let has_col: bool = conn
-        .prepare("SELECT parent_sha FROM stats LIMIT 0")
-        .is_ok();
-    if !has_col {
-        conn.execute_batch("ALTER TABLE stats ADD COLUMN parent_sha TEXT;")?;
-    }
     Ok(())
 }
 
@@ -83,7 +82,7 @@ fn migrate_add_parent_sha(conn: &Connection) -> Result<()> {
 pub fn ensure_unique_index(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_stats_unique
-             ON stats(repo, commit_sha, row_type, folder, COALESCE(file_name, ''));",
+             ON stats(repo, valid_from_sha, row_type, folder, COALESCE(file_name, ''));",
     )?;
     Ok(())
 }

@@ -101,8 +101,8 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
                 }
             };
 
-            let parent = git::parent_sha(&repo, commit_sha).ok().flatten();
-            let parent_ref = parent.as_deref();
+            // Full-tree analysis: close all open rows, then insert fresh ones.
+            db::store::close_all_open_rows(&conn, &args.repo, commit_sha, commit_date)?;
 
             let mut file_rows = Vec::with_capacity(file_entries.len());
             for entry in &file_entries {
@@ -112,12 +112,12 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
                         analyzer.analyze(&entry.path, &entry.content, &mut stats);
                     }
                 }
-                file_rows.push(build_file_row(&args.repo, commit_sha, parent_ref, commit_date, &entry.path, stats));
+                file_rows.push(build_file_row(&args.repo, commit_sha, commit_date, &entry.path, stats));
             }
 
             let folder_rows = aggregator::aggregate_to_folders(&file_rows);
             let repo_row =
-                aggregator::aggregate_to_repo(&args.repo, commit_sha, parent_ref, commit_date, &file_rows);
+                aggregator::aggregate_to_repo(&args.repo, commit_sha, commit_date, &file_rows);
 
             match args.granularity {
                 Granularity::All => {
@@ -180,20 +180,25 @@ fn try_delta_analyze(
         Err(_) => return Ok(false),   // inaccessible commit object
     };
 
+    if !db::store::commit_exists(conn, repo_name, &parent)? {
+        return Ok(false);
+    }
+
     let diffs = match git::diff_commits(repo, &parent, commit_sha) {
         Ok(d) => d,
-        Err(_) => return Ok(false), // missing tree object — fall back to full analysis
+        Err(_) => return Ok(false),
     };
     if diffs.len() > DELTA_FALLBACK_THRESHOLD {
         return Ok(false);
     }
 
-    // Analyze old and new versions of every changed file.
-    let mut removed: Vec<db::store::StatRow> = Vec::new();
     let mut added: Vec<db::store::StatRow> = Vec::new();
+    let mut changed_file_paths: Vec<String> = Vec::new();
+    let mut removed: Vec<db::store::StatRow> = Vec::new();
 
     for diff in &diffs {
         if let Some(old_path) = &diff.old_path {
+            changed_file_paths.push(old_path.clone());
             if let Ok(Some(content)) = git::read_file_at(repo, &parent, old_path) {
                 let mut stats = analyzers::FileStats::default();
                 for analyzer in analyzers {
@@ -201,10 +206,13 @@ fn try_delta_analyze(
                         analyzer.analyze(old_path, &content, &mut stats);
                     }
                 }
-                removed.push(build_file_row(repo_name, &parent, None, "", old_path, stats));
+                removed.push(build_file_row(repo_name, &parent, "", old_path, stats));
             }
         }
         if let Some(new_path) = &diff.new_path {
+            if !changed_file_paths.contains(new_path) {
+                changed_file_paths.push(new_path.clone());
+            }
             if let Ok(Some(content)) = git::read_file_at(repo, commit_sha, new_path) {
                 let mut stats = analyzers::FileStats::default();
                 for analyzer in analyzers {
@@ -212,28 +220,32 @@ fn try_delta_analyze(
                         analyzer.analyze(new_path, &content, &mut stats);
                     }
                 }
-                added.push(build_file_row(repo_name, commit_sha, Some(&parent), commit_date, new_path, stats));
+                added.push(build_file_row(repo_name, commit_sha, commit_date, new_path, stats));
             }
         }
     }
 
+    changed_file_paths.sort_unstable();
+    changed_file_paths.dedup();
+
     match granularity {
         Granularity::Repo => {
-            let parent_repo = match db::store::get_repo_row(conn, repo_name, &parent)? {
+            let parent_repo = match db::store::get_current_repo_row(conn, repo_name)? {
                 Some(r) => r,
                 None => return Ok(false),
             };
-            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, Some(&parent), commit_date, &removed, &added);
+
+            db::store::close_repo_row(conn, repo_name, commit_sha, commit_date)?;
+            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
             db::store::insert_rows(conn, std::slice::from_ref(&new_repo))?;
         }
 
         Granularity::Folder => {
-            let parent_repo = match db::store::get_repo_row(conn, repo_name, &parent)? {
+            let parent_repo = match db::store::get_current_repo_row(conn, repo_name)? {
                 Some(r) => r,
                 None => return Ok(false),
             };
 
-            // Collect the set of folders affected by this diff.
             let affected_folders: std::collections::HashSet<String> = removed
                 .iter()
                 .chain(added.iter())
@@ -242,36 +254,17 @@ fn try_delta_analyze(
             let affected_vec: Vec<String> = affected_folders.into_iter().collect();
 
             let parent_folders =
-                db::store::get_folder_rows_for_folders(conn, repo_name, &parent, &affected_vec)?;
-            if parent_folders.len() != affected_vec.len() {
-                // Some affected folder has no parent row — fall back.
-                // (Can happen if all files in that folder were added brand-new.)
-                // We'll handle this by building missing folder rows from scratch.
-                // Build a lookup of what we do have.
-                let have: std::collections::HashSet<String> =
-                    parent_folders.iter().map(|r| r.folder.clone()).collect();
-                let missing: Vec<String> = affected_vec
-                    .iter()
-                    .filter(|f| !have.contains(*f))
-                    .cloned()
-                    .collect();
-                if !missing.is_empty() {
-                    // If there are genuinely new folders (no parent row), we can still
-                    // proceed: treat the missing parent rows as empty.
-                    // Build placeholder zeroed rows for missing folders.
-                    let _ = missing; // handled below via apply_delta with empty base
-                }
-            }
+                db::store::get_folder_rows_for_folders(conn, repo_name, &affected_vec)?;
 
-            // Build a map from folder → parent folder row (or zeroed placeholder).
             let mut folder_map: std::collections::HashMap<String, db::store::StatRow> =
                 parent_folders.into_iter().map(|r| (r.folder.clone(), r)).collect();
             for folder in &affected_vec {
                 folder_map.entry(folder.clone()).or_insert_with(|| db::store::StatRow {
                     repo: repo_name.to_string(),
-                    commit_sha: parent.clone(),
-                    parent_sha: None,
-                    commit_date: String::new(),
+                    valid_from_sha: parent.clone(),
+                    valid_from_date: String::new(),
+                    valid_to_sha: None,
+                    valid_to_date: None,
                     row_type: "folder".to_string(),
                     folder: folder.clone(),
                     folder_depth: folder.split('/').filter(|s| !s.is_empty()).count() as i32,
@@ -301,7 +294,6 @@ fn try_delta_analyze(
                 });
             }
 
-            // Apply per-folder deltas.
             let mut new_folder_rows: Vec<db::store::StatRow> = Vec::new();
             for (folder, base) in folder_map {
                 let folder_removed: Vec<_> =
@@ -309,39 +301,27 @@ fn try_delta_analyze(
                 let folder_added: Vec<_> =
                     added.iter().filter(|r| r.folder == folder).cloned().collect();
                 let updated =
-                    aggregator::apply_delta(base, commit_sha, Some(&parent), commit_date, &folder_removed, &folder_added);
+                    aggregator::apply_delta(base, commit_sha, commit_date, &folder_removed, &folder_added);
                 if updated.file_count > 0 {
                     new_folder_rows.push(updated);
                 }
             }
 
-            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, Some(&parent), commit_date, &removed, &added);
+            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
 
-            db::store::copy_folder_rows_from_parent(conn, repo_name, &parent, commit_sha, commit_date, &affected_vec)?;
+            db::store::close_rows_for_folders(conn, repo_name, commit_sha, commit_date, &affected_vec)?;
             db::store::insert_rows(conn, &new_folder_rows)?;
+
+            db::store::close_repo_row(conn, repo_name, commit_sha, commit_date)?;
             db::store::insert_rows(conn, std::slice::from_ref(&new_repo))?;
         }
 
         Granularity::All => {
-            let parent_repo = match db::store::get_repo_row(conn, repo_name, &parent)? {
+            let parent_repo = match db::store::get_current_repo_row(conn, repo_name)? {
                 Some(r) => r,
                 None => return Ok(false),
             };
 
-            // Collect all paths that are touched (both old and new) to exclude from SQL copy.
-            let exclude_paths: Vec<String> = diffs
-                .iter()
-                .flat_map(|d| d.old_path.iter().chain(d.new_path.iter()))
-                .cloned()
-                .collect();
-            let exclude_paths: Vec<String> = {
-                let mut v = exclude_paths;
-                v.sort_unstable();
-                v.dedup();
-                v
-            };
-
-            // Affected folders for the folder-row delta.
             let affected_folders: std::collections::HashSet<String> = removed
                 .iter()
                 .chain(added.iter())
@@ -350,15 +330,16 @@ fn try_delta_analyze(
             let affected_vec: Vec<String> = affected_folders.into_iter().collect();
 
             let parent_folders =
-                db::store::get_folder_rows_for_folders(conn, repo_name, &parent, &affected_vec)?;
+                db::store::get_folder_rows_for_folders(conn, repo_name, &affected_vec)?;
             let mut folder_map: std::collections::HashMap<String, db::store::StatRow> =
                 parent_folders.into_iter().map(|r| (r.folder.clone(), r)).collect();
             for folder in &affected_vec {
                 folder_map.entry(folder.clone()).or_insert_with(|| db::store::StatRow {
                     repo: repo_name.to_string(),
-                    commit_sha: parent.clone(),
-                    parent_sha: None,
-                    commit_date: String::new(),
+                    valid_from_sha: parent.clone(),
+                    valid_from_date: String::new(),
+                    valid_to_sha: None,
+                    valid_to_date: None,
                     row_type: "folder".to_string(),
                     folder: folder.clone(),
                     folder_depth: folder.split('/').filter(|s| !s.is_empty()).count() as i32,
@@ -395,18 +376,21 @@ fn try_delta_analyze(
                 let folder_added: Vec<_> =
                     added.iter().filter(|r| r.folder == folder).cloned().collect();
                 let updated =
-                    aggregator::apply_delta(base, commit_sha, Some(&parent), commit_date, &folder_removed, &folder_added);
+                    aggregator::apply_delta(base, commit_sha, commit_date, &folder_removed, &folder_added);
                 if updated.file_count > 0 {
                     new_folder_rows.push(updated);
                 }
             }
 
-            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, Some(&parent), commit_date, &removed, &added);
+            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
 
-            db::store::copy_file_rows_from_parent(conn, repo_name, &parent, commit_sha, commit_date, &exclude_paths)?;
+            db::store::close_rows_for_file_paths(conn, repo_name, commit_sha, commit_date, &changed_file_paths)?;
             db::store::insert_rows(conn, &added)?;
-            db::store::copy_folder_rows_from_parent(conn, repo_name, &parent, commit_sha, commit_date, &affected_vec)?;
+
+            db::store::close_rows_for_folders(conn, repo_name, commit_sha, commit_date, &affected_vec)?;
             db::store::insert_rows(conn, &new_folder_rows)?;
+
+            db::store::close_repo_row(conn, repo_name, commit_sha, commit_date)?;
             db::store::insert_rows(conn, std::slice::from_ref(&new_repo))?;
         }
     }
@@ -653,20 +637,17 @@ fn parse_since_date(s: &str) -> Result<chrono::DateTime<chrono::Utc>> {
 fn build_file_row(
     repo: &str,
     commit_sha: &str,
-    parent_sha: Option<&str>,
     commit_date: &str,
     path: &str,
     stats: analyzers::FileStats,
 ) -> db::store::StatRow {
     let (folder, folder_depth) = git::path_folder(path);
 
-    // Compute type counts before moving stats.file_type into the struct
     let source_file_count = i64::from(stats.file_type.as_deref() == Some("source"));
     let test_file_count = i64::from(stats.file_type.as_deref() == Some("test"));
     let story_file_count = i64::from(stats.file_type.as_deref() == Some("story"));
     let config_file_count = i64::from(stats.file_type.as_deref() == Some("config"));
 
-    // Extension-based file counts
     let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
     let py_file_count   = i64::from(matches!(ext.as_str(), "py"));
     let js_file_count   = i64::from(matches!(ext.as_str(), "js" | "mjs" | "cjs"));
@@ -681,9 +662,10 @@ fn build_file_row(
 
     db::store::StatRow {
         repo: repo.to_string(),
-        commit_sha: commit_sha.to_string(),
-        parent_sha: parent_sha.map(|s| s.to_string()),
-        commit_date: commit_date.to_string(),
+        valid_from_sha: commit_sha.to_string(),
+        valid_from_date: commit_date.to_string(),
+        valid_to_sha: None,
+        valid_to_date: None,
         row_type: "file".to_string(),
         folder,
         folder_depth,
