@@ -100,8 +100,7 @@ pub fn commit_exists(conn: &Connection, repo: &str, commit_sha: &str) -> Result<
 #[allow(dead_code)]
 pub fn get_repo_row(conn: &Connection, repo: &str, commit_sha: &str) -> Result<Option<StatRow>> {
     let sql = format!(
-        "SELECT {} FROM stats WHERE repo = ?1 AND valid_from_sha = ?2 AND row_type = 'repo'",
-        SELECT_COLS
+        "SELECT {SELECT_COLS} FROM stats WHERE repo = ?1 AND valid_from_sha = ?2 AND row_type = 'repo'"
     );
     let mut stmt = conn.prepare_cached(&sql)?;
     let mut rows = stmt.query(params![repo, commit_sha])?;
@@ -114,8 +113,7 @@ pub fn get_repo_row(conn: &Connection, repo: &str, commit_sha: &str) -> Result<O
 /// Returns the currently-open repo-level row (valid_to_sha IS NULL) for the given repo.
 pub fn get_current_repo_row(conn: &Connection, repo: &str) -> Result<Option<StatRow>> {
     let sql = format!(
-        "SELECT {} FROM stats WHERE repo = ?1 AND row_type = 'repo' AND valid_to_sha IS NULL",
-        SELECT_COLS
+        "SELECT {SELECT_COLS} FROM stats WHERE repo = ?1 AND row_type = 'repo' AND valid_to_sha IS NULL"
     );
     let mut stmt = conn.prepare_cached(&sql)?;
     let mut rows = stmt.query(params![repo])?;
@@ -128,11 +126,10 @@ pub fn get_current_repo_row(conn: &Connection, repo: &str) -> Result<Option<Stat
 #[allow(dead_code)]
 pub fn get_all_file_rows(conn: &Connection, repo: &str, commit_date: &str) -> Result<Vec<StatRow>> {
     let sql = format!(
-        "SELECT {} FROM stats
+        "SELECT {SELECT_COLS} FROM stats
          WHERE repo = ?1 AND row_type = 'file'
            AND valid_from_date <= ?2
-           AND (valid_to_date IS NULL OR valid_to_date > ?2)",
-        SELECT_COLS
+           AND (valid_to_date IS NULL OR valid_to_date > ?2)"
     );
     let mut stmt = conn.prepare_cached(&sql)?;
     let rows = stmt.query_map(params![repo, commit_date], row_from_sql)?;
@@ -150,14 +147,13 @@ pub fn get_folder_rows_for_folders(
         return Ok(vec![]);
     }
     let placeholders = (2..2 + folders.len())
-        .map(|i| format!("?{}", i))
+        .map(|i| format!("?{i}"))
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
-        "SELECT {} FROM stats
+        "SELECT {SELECT_COLS} FROM stats
          WHERE repo = ?1 AND row_type = 'folder' AND valid_to_sha IS NULL
-           AND folder IN ({})",
-        SELECT_COLS, placeholders
+           AND folder IN ({placeholders})"
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut all_params: Vec<rusqlite::types::Value> = vec![repo.to_string().into()];
@@ -182,14 +178,13 @@ pub fn close_rows_for_file_paths(
         return Ok(());
     }
     let placeholders = (4..4 + paths.len())
-        .map(|i| format!("?{}", i))
+        .map(|i| format!("?{i}"))
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
         "UPDATE stats SET valid_to_sha = ?2, valid_to_date = ?3
          WHERE repo = ?1 AND row_type = 'file' AND valid_to_sha IS NULL
-           AND file_name IN ({})",
-        placeholders
+           AND file_name IN ({placeholders})"
     );
     let mut all_params: Vec<rusqlite::types::Value> = vec![
         repo.to_string().into(),
@@ -215,14 +210,13 @@ pub fn close_rows_for_folders(
         return Ok(());
     }
     let placeholders = (4..4 + folders.len())
-        .map(|i| format!("?{}", i))
+        .map(|i| format!("?{i}"))
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
         "UPDATE stats SET valid_to_sha = ?2, valid_to_date = ?3
          WHERE repo = ?1 AND row_type = 'folder' AND valid_to_sha IS NULL
-           AND folder IN ({})",
-        placeholders
+           AND folder IN ({placeholders})"
     );
     let mut all_params: Vec<rusqlite::types::Value> = vec![
         repo.to_string().into(),

@@ -16,7 +16,7 @@ pub struct FileDiff {
 }
 
 pub fn open(path: &Path) -> Result<Repository> {
-    Repository::open(path).with_context(|| format!("Failed to open git repository at {:?}", path))
+    Repository::open(path).with_context(|| format!("Failed to open git repository at {path:?}"))
 }
 
 /// Resolve a refspec (branch, tag, SHA, "HEAD") to its commit SHA and ISO date.
@@ -24,10 +24,10 @@ pub fn open(path: &Path) -> Result<Repository> {
 pub fn resolve_commit(repo: &Repository, spec: &str) -> Result<(String, String)> {
     let obj = repo
         .revparse_single(spec)
-        .with_context(|| format!("Failed to resolve '{}'", spec))?;
+        .with_context(|| format!("Failed to resolve '{spec}'"))?;
     let commit = obj
         .peel_to_commit()
-        .with_context(|| format!("'{}' does not point to a commit", spec))?;
+        .with_context(|| format!("'{spec}' does not point to a commit"))?;
     Ok(commit_sha_and_date(&commit))
 }
 
@@ -44,10 +44,10 @@ pub fn all_commits(
 ) -> Result<Vec<(String, String)>> {
     let tip_obj = repo
         .revparse_single(tip_spec)
-        .with_context(|| format!("Failed to resolve '{}'", tip_spec))?;
+        .with_context(|| format!("Failed to resolve '{tip_spec}'"))?;
     let tip_oid = tip_obj
         .peel_to_commit()
-        .with_context(|| format!("'{}' does not point to a commit", tip_spec))?
+        .with_context(|| format!("'{tip_spec}' does not point to a commit"))?
         .id();
 
     let mut revwalk = repo.revwalk()?;
@@ -96,7 +96,7 @@ pub fn walk_files(repo: &Repository, commit_sha: &str) -> Result<Vec<FileEntry>>
     tree.walk(TreeWalkMode::PreOrder, |root, entry| {
         if entry.kind() == Some(ObjectType::Blob) {
             if let Some(name) = entry.name() {
-                blob_entries.push((format!("{}{}", root, name), entry.id()));
+                blob_entries.push((format!("{root}{name}"), entry.id()));
             }
         }
         TreeWalkResult::Ok

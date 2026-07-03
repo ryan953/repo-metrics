@@ -66,7 +66,7 @@ impl GitHubClient {
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
             .send()
-            .with_context(|| format!("request to {} failed", url))?;
+            .with_context(|| format!("request to {url} failed"))?;
 
         let status = resp.status();
         if status == reqwest::StatusCode::FORBIDDEN
@@ -90,7 +90,7 @@ impl GitHubClient {
 
         if !status.is_success() {
             let body = resp.text().unwrap_or_default();
-            bail!("GitHub API error {}: {}", status, body);
+            bail!("GitHub API error {status}: {body}");
         }
 
         Ok(resp)
