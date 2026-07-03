@@ -1,0 +1,69 @@
+# Builds release binaries for Linux and macOS and attaches them to the GitHub
+# Release for a given tag.
+#
+# Normally invoked by release-plz.yml (via workflow_call) right after release-plz
+# creates the tag + GitHub Release for a merged release PR. Can also be run
+# manually against an existing tag, or triggered by pushing a `v*` tag by hand.
+
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Tag to build and attach binaries to (e.g. v0.1.0)
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and release (e.g. v0.1.0)
+        required: true
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Build release binary
+        run: cargo build --release --bin repo-metrics
+
+      - name: Package tarball
+        id: package
+        run: |
+          archive="repo-metrics-${{ steps.tag.outputs.tag }}-${{ matrix.target }}.tar.gz"
+          tar -czvf "$archive" -C target/release repo-metrics
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          # release-plz normally creates the release first; fall back to creating
+          # it here for manual/tag-push runs. Races between matrix jobs are
+          # harmless — whichever loses just sees it already exists.
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --title "$tag" --generate-notes
+          gh release upload "$tag" "${{ steps.package.outputs.archive }}" --clobber

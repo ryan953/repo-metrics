@@ -1,0 +1,79 @@
+# Automates version bumps, CHANGELOG.md, and GitHub Releases with release-plz.
+#
+# On every push to main:
+#   - release-pr: opens/updates a "release PR" that bumps the version in
+#     Cargo.toml and regenerates CHANGELOG.md from the conventional commits
+#     merged since the last release. The bump (patch/minor/major) is chosen
+#     automatically from commit types (fix -> patch, feat -> minor, ! -> major).
+#   - release: when a release PR is merged (the version in Cargo.toml changed),
+#     creates the git tag and GitHub Release with the changelog notes.
+#
+# After a release is created, build-binaries calls release.yml to build the
+# Linux/macOS binaries and attach them to that release. Using workflow_call
+# (not a tag-push event) means the build runs even though release-plz pushed
+# the tag with GITHUB_TOKEN.
+#
+# One-time setup: Settings -> Actions -> General -> Workflow permissions ->
+# enable "Allow GitHub Actions to create and approve pull requests" so
+# release-plz can open the release PR with the default token. No other secrets
+# are needed (crates.io publishing is disabled in release-plz.toml).
+
+name: release-plz
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  # Opens/updates the release PR. Independent from the release job below.
+  release-pr:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-plz-pr
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Run release-plz (release-pr)
+        uses: release-plz/action@e8792575c7f2366cf6ff3ccc33ead9ace5b691c7 # v0.5.130
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Creates the git tag + GitHub Release when a release PR merge lands on main.
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.release-plz.outputs.releases_created }}
+      releases: ${{ steps.release-plz.outputs.releases }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Run release-plz (release)
+        id: release-plz
+        uses: release-plz/action@e8792575c7f2366cf6ff3ccc33ead9ace5b691c7 # v0.5.130
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # When a release was just created, build the binaries and attach them.
+  build-binaries:
+    needs: release
+    if: needs.release.outputs.releases_created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ fromJSON(needs.release.outputs.releases)[0].tag }}
