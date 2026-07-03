@@ -66,12 +66,12 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
             let remaining = (total - i) as f64; // commits not yet processed
             let eta_secs = remaining / rate;
             let eta = if eta_secs < 60.0 {
-                format!("  ETA {:.0}s", eta_secs)
+                format!("  ETA {eta_secs:.0}s")
             } else {
                 format!("  ETA {:.0}m", eta_secs / 60.0)
             };
             if rate >= 1.0 {
-                format!("  {:.1}/s{}", rate, eta)
+                format!("  {rate:.1}/s{eta}")
             } else {
                 format!("  {:.1}/min{}", rate * 60.0, eta)
             }
@@ -161,16 +161,13 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
 
     let elapsed = wall_start.elapsed().as_secs_f64();
     let elapsed_str = if elapsed < 60.0 {
-        format!("{:.1}s", elapsed)
+        format!("{elapsed:.1}s")
     } else if elapsed < 3600.0 {
         format!("{:.1}m", elapsed / 60.0)
     } else {
         format!("{:.1}h", elapsed / 3600.0)
     };
-    eprintln!(
-        "Done: {} analyzed, {} skipped (already in db), took {}",
-        analyzed, skipped, elapsed_str
-    );
+    eprintln!("Done: {analyzed} analyzed, {skipped} skipped (already in db), took {elapsed_str}");
     Ok(())
 }
 
@@ -486,13 +483,13 @@ fn run_status(args: cli::StatusArgs) -> Result<()> {
     let missing = total - loaded;
 
     eprintln!("{}", args.repo);
-    eprintln!("  commits in git history: {}", total);
-    eprintln!("  loaded in db:           {}", loaded);
-    eprintln!("  missing:                {}", missing);
+    eprintln!("  commits in git history: {total}");
+    eprintln!("  loaded in db:           {loaded}");
+    eprintln!("  missing:                {missing}");
 
     if total > 0 {
         let pct = loaded as f64 / total as f64 * 100.0;
-        eprintln!("  coverage:               {:.1}%", pct);
+        eprintln!("  coverage:               {pct:.1}%");
     }
 
     if let (Some(oldest), Some(newest)) = (commits.first(), commits.last()) {
@@ -542,7 +539,7 @@ fn run_prs(args: cli::PrsArgs) -> Result<()> {
     let client = github::GitHubClient::new(&args.token, &args.repo)?;
 
     let (remaining, limit) = client.rate_limit_remaining()?;
-    eprintln!("GitHub API rate limit: {}/{} remaining", remaining, limit);
+    eprintln!("GitHub API rate limit: {remaining}/{limit} remaining");
 
     let since_str = args.since.as_deref();
     eprintln!("{}: Fetching pull requests...", args.repo);
@@ -619,14 +616,11 @@ fn run_prs(args: cli::PrsArgs) -> Result<()> {
 
     let elapsed = wall_start.elapsed().as_secs_f64();
     let elapsed_str = if elapsed < 60.0 {
-        format!("{:.1}s", elapsed)
+        format!("{elapsed:.1}s")
     } else {
         format!("{:.1}m", elapsed / 60.0)
     };
-    eprintln!(
-        "Done: {} fetched, {} skipped (unchanged), took {}",
-        fetched, skipped, elapsed_str
-    );
+    eprintln!("Done: {fetched} fetched, {skipped} skipped (unchanged), took {elapsed_str}");
 
     print_pr_summary(&conn, &args.repo)?;
 
@@ -647,7 +641,7 @@ fn print_pr_summary(conn: &rusqlite::Connection, repo: &str) -> Result<()> {
     })?;
     for row in rows {
         let (author, count) = row?;
-        eprintln!("  {:>5}  {}", count, author);
+        eprintln!("  {count:>5}  {author}");
     }
 
     eprintln!("\n--- PR Reviewers (top 15) ---");
@@ -661,14 +655,11 @@ fn print_pr_summary(conn: &rusqlite::Connection, repo: &str) -> Result<()> {
     })?;
     for row in rows {
         let (reviewer, count) = row?;
-        eprintln!("  {:>5}  {}", count, reviewer);
+        eprintln!("  {count:>5}  {reviewer}");
     }
 
     eprintln!("\n--- Review Balance (reviews / authored, merged PRs) ---");
-    eprintln!(
-        "  {:>5}  {:>5}  {:>6}  {}",
-        "auth", "revw", "ratio", "person"
-    );
+    eprintln!("  {:>5}  {:>5}  {:>6}  person", "auth", "revw", "ratio");
     let mut stmt = conn.prepare(
         "WITH people AS (
             SELECT author AS person FROM pull_requests WHERE repo = ?1 AND merged = 1
@@ -711,13 +702,10 @@ fn print_pr_summary(conn: &rusqlite::Connection, repo: &str) -> Result<()> {
     for row in rows {
         let (person, authored, reviewed, ratio) = row?;
         let ratio_str = match ratio {
-            Some(r) => format!("{:.2}", r),
+            Some(r) => format!("{r:.2}"),
             None => "  -".to_string(),
         };
-        eprintln!(
-            "  {:>5}  {:>5}  {:>6}  {}",
-            authored, reviewed, ratio_str, person
-        );
+        eprintln!("  {authored:>5}  {reviewed:>5}  {ratio_str:>6}  {person}");
     }
 
     Ok(())
@@ -725,7 +713,7 @@ fn print_pr_summary(conn: &rusqlite::Connection, repo: &str) -> Result<()> {
 
 fn parse_since_date(s: &str) -> Result<chrono::DateTime<chrono::Utc>> {
     let naive = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-        .with_context(|| format!("Invalid --since date '{}': expected YYYY-MM-DD", s))?;
+        .with_context(|| format!("Invalid --since date '{s}': expected YYYY-MM-DD"))?;
     Ok(naive.and_hms_opt(0, 0, 0).unwrap().and_utc())
 }
 
