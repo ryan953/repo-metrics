@@ -16,8 +16,7 @@ pub struct FileDiff {
 }
 
 pub fn open(path: &Path) -> Result<Repository> {
-    Repository::open(path)
-        .with_context(|| format!("Failed to open git repository at {:?}", path))
+    Repository::open(path).with_context(|| format!("Failed to open git repository at {:?}", path))
 }
 
 /// Resolve a refspec (branch, tag, SHA, "HEAD") to its commit SHA and ISO date.

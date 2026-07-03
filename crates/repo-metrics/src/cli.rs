@@ -13,7 +13,10 @@ pub enum Granularity {
 }
 
 #[derive(Parser)]
-#[command(name = "repo-metrics", about = "Collect statistics from git repositories")]
+#[command(
+    name = "repo-metrics",
+    about = "Collect statistics from git repositories"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
