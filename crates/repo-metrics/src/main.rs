@@ -149,7 +149,7 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
         }
 
         analyzed += 1;
-        if analyzed % BATCH_SIZE == 0 {
+        if analyzed.is_multiple_of(BATCH_SIZE) {
             conn.execute_batch("COMMIT; BEGIN")?;
         }
     }
@@ -607,7 +607,7 @@ fn run_prs(args: cli::PrsArgs) -> Result<()> {
         }
 
         fetched += 1;
-        if fetched % 100 == 0 {
+        if fetched.is_multiple_of(100) {
             conn.execute_batch("COMMIT; BEGIN")?;
         }
     }
