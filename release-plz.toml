@@ -11,3 +11,9 @@ publish = false
 # the intent is obvious).
 git_tag_enable = true
 git_release_enable = true
+
+# Create the GitHub Release as a draft. GitHub's immutable-releases feature
+# makes a *published* release read-only, which blocks release.yml from attaching
+# the built binaries (HTTP 422). Drafts stay mutable, so release.yml uploads the
+# tarballs to the draft and then publishes it once all assets are attached.
+git_release_draft = true
