@@ -93,11 +93,7 @@ pub fn upsert_review(conn: &Connection, row: &ReviewRow) -> Result<()> {
     Ok(())
 }
 
-pub fn pr_updated_at(
-    conn: &Connection,
-    repo: &str,
-    pr_number: i64,
-) -> Result<Option<String>> {
+pub fn pr_updated_at(conn: &Connection, repo: &str, pr_number: i64) -> Result<Option<String>> {
     let mut stmt = conn.prepare_cached(
         "SELECT updated_at FROM pull_requests WHERE repo = ?1 AND pr_number = ?2",
     )?;

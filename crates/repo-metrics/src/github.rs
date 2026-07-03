@@ -129,8 +129,7 @@ impl GitHubClient {
                 self.repo, page
             );
             let resp = self.get(&url)?;
-            let pulls: Vec<PullRequest> =
-                resp.json().context("failed to parse pulls response")?;
+            let pulls: Vec<PullRequest> = resp.json().context("failed to parse pulls response")?;
 
             if pulls.is_empty() {
                 break;
@@ -178,8 +177,7 @@ impl GitHubClient {
                 self.repo, pr_number, page
             );
             let resp = self.get(&url)?;
-            let reviews: Vec<Review> =
-                resp.json().context("failed to parse reviews response")?;
+            let reviews: Vec<Review> = resp.json().context("failed to parse reviews response")?;
 
             if reviews.is_empty() {
                 break;
@@ -190,5 +188,4 @@ impl GitHubClient {
 
         Ok(all)
     }
-
 }

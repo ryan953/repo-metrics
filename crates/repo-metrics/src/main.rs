@@ -79,7 +79,14 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
             String::new()
         };
 
-        eprintln!("[{}/{}] {} @ {}{}", i + 1, total, args.repo, &commit_sha[..8], throughput);
+        eprintln!(
+            "[{}/{}] {} @ {}{}",
+            i + 1,
+            total,
+            args.repo,
+            &commit_sha[..8],
+            throughput
+        );
 
         let used_delta = try_delta_analyze(
             &repo,
@@ -112,7 +119,13 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
                         analyzer.analyze(&entry.path, &entry.content, &mut stats);
                     }
                 }
-                file_rows.push(build_file_row(&args.repo, commit_sha, commit_date, &entry.path, stats));
+                file_rows.push(build_file_row(
+                    &args.repo,
+                    commit_sha,
+                    commit_date,
+                    &entry.path,
+                    stats,
+                ));
             }
 
             let folder_rows = aggregator::aggregate_to_folders(&file_rows);
@@ -220,7 +233,13 @@ fn try_delta_analyze(
                         analyzer.analyze(new_path, &content, &mut stats);
                     }
                 }
-                added.push(build_file_row(repo_name, commit_sha, commit_date, new_path, stats));
+                added.push(build_file_row(
+                    repo_name,
+                    commit_sha,
+                    commit_date,
+                    new_path,
+                    stats,
+                ));
             }
         }
     }
@@ -236,7 +255,8 @@ fn try_delta_analyze(
             };
 
             db::store::close_repo_row(conn, repo_name, commit_sha, commit_date)?;
-            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
+            let new_repo =
+                aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
             db::store::insert_rows(conn, std::slice::from_ref(&new_repo))?;
         }
 
@@ -257,59 +277,82 @@ fn try_delta_analyze(
                 db::store::get_folder_rows_for_folders(conn, repo_name, &affected_vec)?;
 
             let mut folder_map: std::collections::HashMap<String, db::store::StatRow> =
-                parent_folders.into_iter().map(|r| (r.folder.clone(), r)).collect();
+                parent_folders
+                    .into_iter()
+                    .map(|r| (r.folder.clone(), r))
+                    .collect();
             for folder in &affected_vec {
-                folder_map.entry(folder.clone()).or_insert_with(|| db::store::StatRow {
-                    repo: repo_name.to_string(),
-                    valid_from_sha: parent.clone(),
-                    valid_from_date: String::new(),
-                    valid_to_sha: None,
-                    valid_to_date: None,
-                    row_type: "folder".to_string(),
-                    folder: folder.clone(),
-                    folder_depth: folder.split('/').filter(|s| !s.is_empty()).count() as i32,
-                    file_name: None,
-                    file_count: 0,
-                    sloc_nonblank: 0,
-                    sloc_noncomment: 0,
-                    file_type: None,
-                    source_file_count: 0,
-                    test_file_count: 0,
-                    story_file_count: 0,
-                    config_file_count: 0,
-                    js_exports_default: None,
-                    js_exports_named: None,
-                    js_exports_total: None,
-                    js_export_matches_filename: 0,
-                    py_file_count: 0,
-                    js_file_count: 0,
-                    jsx_file_count: 0,
-                    ts_file_count: 0,
-                    tsx_file_count: 0,
-                    css_file_count: 0,
-                    html_file_count: 0,
-                    md_file_count: 0,
-                    json_file_count: 0,
-                    yaml_file_count: 0,
-                });
+                folder_map
+                    .entry(folder.clone())
+                    .or_insert_with(|| db::store::StatRow {
+                        repo: repo_name.to_string(),
+                        valid_from_sha: parent.clone(),
+                        valid_from_date: String::new(),
+                        valid_to_sha: None,
+                        valid_to_date: None,
+                        row_type: "folder".to_string(),
+                        folder: folder.clone(),
+                        folder_depth: folder.split('/').filter(|s| !s.is_empty()).count() as i32,
+                        file_name: None,
+                        file_count: 0,
+                        sloc_nonblank: 0,
+                        sloc_noncomment: 0,
+                        file_type: None,
+                        source_file_count: 0,
+                        test_file_count: 0,
+                        story_file_count: 0,
+                        config_file_count: 0,
+                        js_exports_default: None,
+                        js_exports_named: None,
+                        js_exports_total: None,
+                        js_export_matches_filename: 0,
+                        py_file_count: 0,
+                        js_file_count: 0,
+                        jsx_file_count: 0,
+                        ts_file_count: 0,
+                        tsx_file_count: 0,
+                        css_file_count: 0,
+                        html_file_count: 0,
+                        md_file_count: 0,
+                        json_file_count: 0,
+                        yaml_file_count: 0,
+                    });
             }
 
             let mut new_folder_rows: Vec<db::store::StatRow> = Vec::new();
             for (folder, base) in folder_map {
-                let folder_removed: Vec<_> =
-                    removed.iter().filter(|r| r.folder == folder).cloned().collect();
-                let folder_added: Vec<_> =
-                    added.iter().filter(|r| r.folder == folder).cloned().collect();
-                let updated =
-                    aggregator::apply_delta(base, commit_sha, commit_date, &folder_removed, &folder_added);
+                let folder_removed: Vec<_> = removed
+                    .iter()
+                    .filter(|r| r.folder == folder)
+                    .cloned()
+                    .collect();
+                let folder_added: Vec<_> = added
+                    .iter()
+                    .filter(|r| r.folder == folder)
+                    .cloned()
+                    .collect();
+                let updated = aggregator::apply_delta(
+                    base,
+                    commit_sha,
+                    commit_date,
+                    &folder_removed,
+                    &folder_added,
+                );
                 if updated.file_count > 0 {
                     new_folder_rows.push(updated);
                 }
             }
 
-            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
+            let new_repo =
+                aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
 
-            db::store::close_rows_for_folders(conn, repo_name, commit_sha, commit_date, &affected_vec)?;
+            db::store::close_rows_for_folders(
+                conn,
+                repo_name,
+                commit_sha,
+                commit_date,
+                &affected_vec,
+            )?;
             db::store::insert_rows(conn, &new_folder_rows)?;
 
             db::store::close_repo_row(conn, repo_name, commit_sha, commit_date)?;
@@ -332,62 +375,91 @@ fn try_delta_analyze(
             let parent_folders =
                 db::store::get_folder_rows_for_folders(conn, repo_name, &affected_vec)?;
             let mut folder_map: std::collections::HashMap<String, db::store::StatRow> =
-                parent_folders.into_iter().map(|r| (r.folder.clone(), r)).collect();
+                parent_folders
+                    .into_iter()
+                    .map(|r| (r.folder.clone(), r))
+                    .collect();
             for folder in &affected_vec {
-                folder_map.entry(folder.clone()).or_insert_with(|| db::store::StatRow {
-                    repo: repo_name.to_string(),
-                    valid_from_sha: parent.clone(),
-                    valid_from_date: String::new(),
-                    valid_to_sha: None,
-                    valid_to_date: None,
-                    row_type: "folder".to_string(),
-                    folder: folder.clone(),
-                    folder_depth: folder.split('/').filter(|s| !s.is_empty()).count() as i32,
-                    file_name: None,
-                    file_count: 0,
-                    sloc_nonblank: 0,
-                    sloc_noncomment: 0,
-                    file_type: None,
-                    source_file_count: 0,
-                    test_file_count: 0,
-                    story_file_count: 0,
-                    config_file_count: 0,
-                    js_exports_default: None,
-                    js_exports_named: None,
-                    js_exports_total: None,
-                    js_export_matches_filename: 0,
-                    py_file_count: 0,
-                    js_file_count: 0,
-                    jsx_file_count: 0,
-                    ts_file_count: 0,
-                    tsx_file_count: 0,
-                    css_file_count: 0,
-                    html_file_count: 0,
-                    md_file_count: 0,
-                    json_file_count: 0,
-                    yaml_file_count: 0,
-                });
+                folder_map
+                    .entry(folder.clone())
+                    .or_insert_with(|| db::store::StatRow {
+                        repo: repo_name.to_string(),
+                        valid_from_sha: parent.clone(),
+                        valid_from_date: String::new(),
+                        valid_to_sha: None,
+                        valid_to_date: None,
+                        row_type: "folder".to_string(),
+                        folder: folder.clone(),
+                        folder_depth: folder.split('/').filter(|s| !s.is_empty()).count() as i32,
+                        file_name: None,
+                        file_count: 0,
+                        sloc_nonblank: 0,
+                        sloc_noncomment: 0,
+                        file_type: None,
+                        source_file_count: 0,
+                        test_file_count: 0,
+                        story_file_count: 0,
+                        config_file_count: 0,
+                        js_exports_default: None,
+                        js_exports_named: None,
+                        js_exports_total: None,
+                        js_export_matches_filename: 0,
+                        py_file_count: 0,
+                        js_file_count: 0,
+                        jsx_file_count: 0,
+                        ts_file_count: 0,
+                        tsx_file_count: 0,
+                        css_file_count: 0,
+                        html_file_count: 0,
+                        md_file_count: 0,
+                        json_file_count: 0,
+                        yaml_file_count: 0,
+                    });
             }
 
             let mut new_folder_rows: Vec<db::store::StatRow> = Vec::new();
             for (folder, base) in folder_map {
-                let folder_removed: Vec<_> =
-                    removed.iter().filter(|r| r.folder == folder).cloned().collect();
-                let folder_added: Vec<_> =
-                    added.iter().filter(|r| r.folder == folder).cloned().collect();
-                let updated =
-                    aggregator::apply_delta(base, commit_sha, commit_date, &folder_removed, &folder_added);
+                let folder_removed: Vec<_> = removed
+                    .iter()
+                    .filter(|r| r.folder == folder)
+                    .cloned()
+                    .collect();
+                let folder_added: Vec<_> = added
+                    .iter()
+                    .filter(|r| r.folder == folder)
+                    .cloned()
+                    .collect();
+                let updated = aggregator::apply_delta(
+                    base,
+                    commit_sha,
+                    commit_date,
+                    &folder_removed,
+                    &folder_added,
+                );
                 if updated.file_count > 0 {
                     new_folder_rows.push(updated);
                 }
             }
 
-            let new_repo = aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
+            let new_repo =
+                aggregator::apply_delta(parent_repo, commit_sha, commit_date, &removed, &added);
 
-            db::store::close_rows_for_file_paths(conn, repo_name, commit_sha, commit_date, &changed_file_paths)?;
+            db::store::close_rows_for_file_paths(
+                conn,
+                repo_name,
+                commit_sha,
+                commit_date,
+                &changed_file_paths,
+            )?;
             db::store::insert_rows(conn, &added)?;
 
-            db::store::close_rows_for_folders(conn, repo_name, commit_sha, commit_date, &affected_vec)?;
+            db::store::close_rows_for_folders(
+                conn,
+                repo_name,
+                commit_sha,
+                commit_date,
+                &affected_vec,
+            )?;
             db::store::insert_rows(conn, &new_folder_rows)?;
 
             db::store::close_repo_row(conn, repo_name, commit_sha, commit_date)?;
@@ -407,7 +479,10 @@ fn run_status(args: cli::StatusArgs) -> Result<()> {
     let in_db = db::store::committed_shas(&conn, &args.repo)?;
 
     let total = commits.len();
-    let loaded = commits.iter().filter(|(sha, _)| in_db.contains(sha)).count();
+    let loaded = commits
+        .iter()
+        .filter(|(sha, _)| in_db.contains(sha))
+        .count();
     let missing = total - loaded;
 
     eprintln!("{}", args.repo);
@@ -423,16 +498,30 @@ fn run_status(args: cli::StatusArgs) -> Result<()> {
     if let (Some(oldest), Some(newest)) = (commits.first(), commits.last()) {
         let oldest_date = &oldest.1;
         let newest_date = &newest.1;
-        eprintln!("  date range (git):       {} .. {}", &oldest_date[..10], &newest_date[..10]);
+        eprintln!(
+            "  date range (git):       {} .. {}",
+            &oldest_date[..10],
+            &newest_date[..10]
+        );
     }
 
-    let loaded_commits: Vec<&(String, String)> = commits.iter().filter(|(sha, _)| in_db.contains(sha)).collect();
+    let loaded_commits: Vec<&(String, String)> = commits
+        .iter()
+        .filter(|(sha, _)| in_db.contains(sha))
+        .collect();
     if let (Some(oldest), Some(newest)) = (loaded_commits.first(), loaded_commits.last()) {
-        eprintln!("  date range (db):        {} .. {}", &oldest.1[..10], &newest.1[..10]);
+        eprintln!(
+            "  date range (db):        {} .. {}",
+            &oldest.1[..10],
+            &newest.1[..10]
+        );
     }
 
     if missing > 0 {
-        let missing_commits: Vec<&(String, String)> = commits.iter().filter(|(sha, _)| !in_db.contains(sha)).collect();
+        let missing_commits: Vec<&(String, String)> = commits
+            .iter()
+            .filter(|(sha, _)| !in_db.contains(sha))
+            .collect();
         let show = missing_commits.len().min(10);
         eprintln!("\n  oldest missing commits:");
         for (sha, date) in &missing_commits[..show] {
@@ -576,7 +665,10 @@ fn print_pr_summary(conn: &rusqlite::Connection, repo: &str) -> Result<()> {
     }
 
     eprintln!("\n--- Review Balance (reviews / authored, merged PRs) ---");
-    eprintln!("  {:>5}  {:>5}  {:>6}  {}", "auth", "revw", "ratio", "person");
+    eprintln!(
+        "  {:>5}  {:>5}  {:>6}  {}",
+        "auth", "revw", "ratio", "person"
+    );
     let mut stmt = conn.prepare(
         "WITH people AS (
             SELECT author AS person FROM pull_requests WHERE repo = ?1 AND merged = 1
@@ -622,7 +714,10 @@ fn print_pr_summary(conn: &rusqlite::Connection, repo: &str) -> Result<()> {
             Some(r) => format!("{:.2}", r),
             None => "  -".to_string(),
         };
-        eprintln!("  {:>5}  {:>5}  {:>6}  {}", authored, reviewed, ratio_str, person);
+        eprintln!(
+            "  {:>5}  {:>5}  {:>6}  {}",
+            authored, reviewed, ratio_str, person
+        );
     }
 
     Ok(())
@@ -649,14 +744,14 @@ fn build_file_row(
     let config_file_count = i64::from(stats.file_type.as_deref() == Some("config"));
 
     let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
-    let py_file_count   = i64::from(matches!(ext.as_str(), "py"));
-    let js_file_count   = i64::from(matches!(ext.as_str(), "js" | "mjs" | "cjs"));
-    let jsx_file_count  = i64::from(matches!(ext.as_str(), "jsx"));
-    let ts_file_count   = i64::from(matches!(ext.as_str(), "ts" | "mts" | "cts"));
-    let tsx_file_count  = i64::from(matches!(ext.as_str(), "tsx"));
-    let css_file_count  = i64::from(matches!(ext.as_str(), "css" | "scss" | "sass" | "less"));
+    let py_file_count = i64::from(matches!(ext.as_str(), "py"));
+    let js_file_count = i64::from(matches!(ext.as_str(), "js" | "mjs" | "cjs"));
+    let jsx_file_count = i64::from(matches!(ext.as_str(), "jsx"));
+    let ts_file_count = i64::from(matches!(ext.as_str(), "ts" | "mts" | "cts"));
+    let tsx_file_count = i64::from(matches!(ext.as_str(), "tsx"));
+    let css_file_count = i64::from(matches!(ext.as_str(), "css" | "scss" | "sass" | "less"));
     let html_file_count = i64::from(matches!(ext.as_str(), "html" | "htm"));
-    let md_file_count   = i64::from(matches!(ext.as_str(), "md" | "mdx"));
+    let md_file_count = i64::from(matches!(ext.as_str(), "md" | "mdx"));
     let json_file_count = i64::from(matches!(ext.as_str(), "json"));
     let yaml_file_count = i64::from(matches!(ext.as_str(), "yaml" | "yml"));
 

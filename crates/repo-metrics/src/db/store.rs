@@ -40,8 +40,7 @@ pub struct StatRow {
     pub yaml_file_count: i64,
 }
 
-const SELECT_COLS: &str =
-    "repo, valid_from_sha, valid_from_date, valid_to_sha, valid_to_date,
+const SELECT_COLS: &str = "repo, valid_from_sha, valid_from_date, valid_to_sha, valid_to_date,
      row_type, folder, folder_depth, file_name,
      file_count, sloc_nonblank, sloc_noncomment,
      file_type, source_file_count, test_file_count, story_file_count, config_file_count,
@@ -137,7 +136,8 @@ pub fn get_all_file_rows(conn: &Connection, repo: &str, commit_date: &str) -> Re
     );
     let mut stmt = conn.prepare_cached(&sql)?;
     let rows = stmt.query_map(params![repo, commit_date], row_from_sql)?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 /// Returns the currently-open folder rows (valid_to_sha IS NULL) for the given folders.
@@ -160,14 +160,13 @@ pub fn get_folder_rows_for_folders(
         SELECT_COLS, placeholders
     );
     let mut stmt = conn.prepare(&sql)?;
-    let mut all_params: Vec<rusqlite::types::Value> = vec![
-        repo.to_string().into(),
-    ];
+    let mut all_params: Vec<rusqlite::types::Value> = vec![repo.to_string().into()];
     for f in folders {
         all_params.push(f.clone().into());
     }
     let rows = stmt.query_map(rusqlite::params_from_iter(all_params), row_from_sql)?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 /// Closes (sets valid_to) on all currently-open rows for the given file paths.
