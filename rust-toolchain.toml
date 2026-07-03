@@ -1,0 +1,12 @@
+# Pin the Rust toolchain so every environment — local dev, CI Linux, CI macOS —
+# uses the same compiler and the same clippy/rustfmt lint set. rustup reads this
+# file automatically and installs the pinned version on first cargo invocation.
+#
+# Bump this version deliberately (and re-run `cargo clippy` locally) rather than
+# letting each machine drift to whatever rustup default it happens to have.
+[toolchain]
+channel = "1.96.0"
+# minimal profile so pinning an exact stable doesn't try to pull nightly-only
+# components (miri, cranelift); we only need rustfmt and clippy.
+profile = "minimal"
+components = ["rustfmt", "clippy"]
