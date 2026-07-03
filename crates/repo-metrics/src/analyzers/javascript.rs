@@ -17,14 +17,11 @@ static RE_DEFAULT_NAMED: Lazy<Regex> = Lazy::new(|| {
 });
 
 // Any `export default` — covers both named and anonymous forms for counting
-static RE_DEFAULT_ANY: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?m)^export\s+default\b").unwrap()
-});
+static RE_DEFAULT_ANY: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^export\s+default\b").unwrap());
 
 // export { ... } or export type { ... } — captures the list contents
-static RE_EXPORT_LIST: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?ms)^export\s+(?:type\s+)?\{([^}]+)\}").unwrap()
-});
+static RE_EXPORT_LIST: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?ms)^export\s+(?:type\s+)?\{([^}]+)\}").unwrap());
 
 pub struct JsAnalyzer;
 
