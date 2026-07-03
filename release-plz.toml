@@ -1,0 +1,13 @@
+# release-plz configuration.
+# https://release-plz.dev/docs/config
+
+[workspace]
+# This crate is distributed as a GitHub Release binary, not on crates.io, so
+# skip `cargo publish`. release-plz still bumps the version, updates the
+# changelog, tags, and creates the GitHub Release.
+publish = false
+
+# Create the git tag and GitHub Release (both default true; set explicitly so
+# the intent is obvious).
+git_tag_enable = true
+git_release_enable = true

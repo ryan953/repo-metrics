@@ -16,6 +16,28 @@ cargo build --release
 
 The binary is written to `target/debug/repo-metrics` or `target/release/repo-metrics`.
 
+## Releases
+
+Prebuilt binaries for Linux (`x86_64`) and macOS (`aarch64`) are attached to each
+[GitHub Release](https://github.com/ryan953/repo-metrics/releases) as `.tar.gz`
+tarballs. Download the one for your platform and extract the `repo-metrics` binary.
+
+Releases are automated with [release-plz](https://release-plz.dev) driven by
+[Conventional Commits](https://www.conventionalcommits.org):
+
+1. Merge changes to `main` using conventional commit messages (`feat:`, `fix:`,
+   `ref:`, …). The commit types determine the next version — `fix:` bumps the
+   patch, `feat:` the minor, and a `!` / `BREAKING CHANGE:` the major.
+2. release-plz keeps a **release PR** open that bumps the version in `Cargo.toml`
+   and regenerates `CHANGELOG.md` from the commits since the last release.
+3. **Merging that release PR** is the only manual step. It creates the git tag
+   and GitHub Release, then triggers the build that compiles and attaches the
+   platform binaries.
+
+To cut a release by hand instead, push a `v*` tag (or run the **Release**
+workflow via workflow dispatch) — the same build attaches binaries to the
+release for that tag.
+
 ## Commands
 
 - **`analyze`** — Walk git commit history and collect code metrics (SLOC, file types, exports)

@@ -1,0 +1,33 @@
+# CI for the repo-metrics crate: fmt / clippy / test, plus a release-profile
+# compile check.
+#
+# This workflow does not produce release artifacts — release.yml rebuilds the
+# binaries for each target when a tag is pushed, so archiving a single-OS build
+# here would be orphaned output that nothing consumes.
+
+name: Build
+
+on:
+  push:
+    branches: ["main", "release/*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Build release binary
+        run: cargo build --release --bin repo-metrics
