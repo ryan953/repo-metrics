@@ -8,8 +8,11 @@
 name: Build
 
 on:
+  # Only build on pushes to main. Branch pushes are covered by the
+  # pull_request trigger; listing extra branch globs here (e.g. release/*)
+  # just double-runs CI on any such branch that also has an open PR.
   push:
-    branches: ["main", "release/*"]
+    branches: ["main"]
   pull_request:
   workflow_dispatch:
 
