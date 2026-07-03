@@ -26,7 +26,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build:
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +36,10 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
+    # Retry crate downloads: a transient crates.io curl failure has flaked a
+    # release build before, and retrying is cheaper than a half-attached release.
+    env:
+      CARGO_NET_RETRY: "10"
     steps:
       - name: Resolve tag
         id: tag
@@ -61,9 +65,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ steps.tag.outputs.tag }}"
-          # release-plz normally creates the release first; fall back to creating
-          # it here for manual/tag-push runs. Races between matrix jobs are
-          # harmless — whichever loses just sees it already exists.
+          # release-plz normally creates the release (as a draft) first; fall
+          # back to creating it here for manual/tag-push runs. Uploads must land
+          # on a *draft* — GitHub's immutable-releases feature rejects asset
+          # uploads to a published release with HTTP 422. The publish job below
+          # flips the release to published once every matrix job has attached its
+          # tarball. Races between matrix jobs are harmless — whichever loses
+          # just sees it already exists.
           gh release view "$tag" >/dev/null 2>&1 \
-            || gh release create "$tag" --title "$tag" --generate-notes
+            || gh release create "$tag" --draft --title "$tag" --generate-notes
           gh release upload "$tag" "${{ steps.package.outputs.archive }}" --clobber
+
+  # Publish the draft once all binaries are attached. Publishing is the point at
+  # which the release becomes immutable, so it must run after every build job.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${{ steps.tag.outputs.tag }}" --draft=false --repo "${{ github.repository }}"

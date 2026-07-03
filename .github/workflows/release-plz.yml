@@ -6,12 +6,15 @@
 #     merged since the last release. The bump (patch/minor/major) is chosen
 #     automatically from commit types (fix -> patch, feat -> minor, ! -> major).
 #   - release: when a release PR is merged (the version in Cargo.toml changed),
-#     creates the git tag and GitHub Release with the changelog notes.
+#     creates the git tag and a *draft* GitHub Release with the changelog notes
+#     (git_release_draft in release-plz.toml).
 #
-# After a release is created, build-binaries calls release.yml to build the
-# Linux/macOS binaries and attach them to that release. Using workflow_call
-# (not a tag-push event) means the build runs even though release-plz pushed
-# the tag with GITHUB_TOKEN.
+# After the draft is created, build-binaries calls release.yml to build the
+# Linux/macOS binaries, attach them to the draft, and then publish it. The
+# draft matters: GitHub's immutable-releases feature makes a published release
+# read-only, so a release published up front cannot have binaries attached
+# afterwards (HTTP 422). Using workflow_call (not a tag-push event) means the
+# build runs even though release-plz pushed the tag with GITHUB_TOKEN.
 #
 # One-time setup: Settings -> Actions -> General -> Workflow permissions ->
 # enable "Allow GitHub Actions to create and approve pull requests" so
