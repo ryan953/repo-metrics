@@ -232,18 +232,33 @@ recorded on a previous run. One row per commit.
 | `committer_date`  | TEXT | ISO 8601 committer date — when the commit object was created (may differ from `author_date` for rebases, squash-merges, cherry-picks, etc.) |
 | `committer_name`  | TEXT | Committer name, as recorded on the commit                                 |
 | `committer_email` | TEXT | Committer email, as recorded on the commit                                |
+| `additions`       | INT  | Lines added, diffed against the commit's first parent (empty tree for a root commit) — same convention as `git show --stat` |
+| `deletions`       | INT  | Lines deleted, same diff convention as `additions`                        |
+| `files_changed`   | INT  | Number of files touched by the commit. Git's diff model has no separate "modified lines" count — a changed line is one deletion plus one insertion — so `files_changed` is the closest analog: how many files a commit touched, as opposed to how many lines |
 
-Unique on `(repo, sha)`; inserts are `INSERT OR IGNORE`, so re-running `analyze` never
-duplicates rows.
+Unique on `(repo, sha)`. Inserts are upserts keyed on `(repo, sha)`: re-running
+`analyze` never duplicates rows, and an existing row's `additions`/`deletions`/
+`files_changed` are only ever written once — the identity/date fields are immutable
+(SHAs are content-addressed) and never rewritten.
 
 **Upgrading an existing database:** if you have a database with `stats` history already
-populated by an older version of `repo-metrics` (which had no `commits` table), a normal
-`analyze` re-run against the same `--commit` ref will create the `commits` table and
-backfill it for the *entire* commit history — not just new commits. This backfill is
-cheap: capturing a commit's author/committer metadata is a single object lookup with no
-file diffing, so it happens for every commit in the walk regardless of whether that
-commit's `stats` rows are skipped as already-recorded. A full, expensive re-analysis
-(dropping/recreating the database) is **not** required to get `commits` populated.
+populated by an older version of `repo-metrics` (which had no `commits` table, or had one
+without line stats), a normal `analyze` re-run against the same `--commit` ref will
+create/migrate the `commits` table and backfill it for the *entire* commit history — not
+just new commits. A full, expensive re-analysis (dropping/recreating the database) is
+**not** required.
+
+This backfill has two different costs, matching the two kinds of columns above:
+
+- **Author/committer identity and dates** are cheap: capturing them is a single object
+  lookup with no file diffing, so it happens for every commit in the walk regardless of
+  whether that commit's `stats` rows are skipped as already-recorded.
+- **`additions`/`deletions`/`files_changed`** require generating a diff against the
+  commit's parent, so they're computed only once per commit: `analyze` checks whether a
+  commit's row already has line stats before diffing it, so a database that's already
+  fully backfilled pays no extra diffing cost on subsequent runs, and only commits still
+  missing line stats (new commits, or old rows from before this feature existed) get
+  diffed.
 
 ### `pull_requests` table
 
@@ -325,6 +340,17 @@ FROM commits
 WHERE repo = 'getsentry/sentry'
 GROUP BY author_email, month
 ORDER BY month, commits DESC;
+
+-- Commit size over time: not just how many commits per month, but how big they were
+SELECT strftime('%Y-%m', author_date) AS month,
+       COUNT(*) AS commits,
+       SUM(additions) AS additions,
+       SUM(deletions) AS deletions,
+       ROUND(AVG(additions + deletions), 1) AS avg_commit_size
+FROM commits
+WHERE repo = 'getsentry/sentry'
+GROUP BY month
+ORDER BY month;
 
 -- Top authors by commit count, comparing two calendar years
 SELECT author_email,
