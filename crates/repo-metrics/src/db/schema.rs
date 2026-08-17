@@ -111,6 +111,15 @@ pub fn ensure_commits_table(conn: &Connection) -> Result<()> {
             committer_name  TEXT    NOT NULL,
             committer_email TEXT    NOT NULL,
 
+            -- Diff size against the first parent (empty tree for a root commit),
+            -- same convention as `git show --stat`. NULL until computed: unlike the
+            -- identity/date fields above, these require generating a diff, so they're
+            -- filled in lazily (see `commit_store::needs_line_stats`) rather than on
+            -- every visit.
+            additions       INTEGER,
+            deletions       INTEGER,
+            files_changed   INTEGER,
+
             UNIQUE(repo, sha)
         );
 
@@ -120,6 +129,24 @@ pub fn ensure_commits_table(conn: &Connection) -> Result<()> {
             ON commits(repo, author_date);
         ",
     )?;
+    migrate_commits_add_line_stats(conn)?;
+    Ok(())
+}
+
+/// Adds `additions`/`deletions`/`files_changed` to a `commits` table created by an
+/// older version of `repo-metrics` that predates line-stat tracking. Detected via a
+/// probe query rather than a version table, matching `migrate_add_parent_sha` above.
+fn migrate_commits_add_line_stats(conn: &Connection) -> Result<()> {
+    let has_col: bool = conn
+        .prepare("SELECT additions FROM commits LIMIT 0")
+        .is_ok();
+    if !has_col {
+        conn.execute_batch(
+            "ALTER TABLE commits ADD COLUMN additions INTEGER;
+             ALTER TABLE commits ADD COLUMN deletions INTEGER;
+             ALTER TABLE commits ADD COLUMN files_changed INTEGER;",
+        )?;
+    }
     Ok(())
 }
 

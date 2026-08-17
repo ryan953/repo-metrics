@@ -54,11 +54,21 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
 
     for (i, (commit_sha, commit_date)) in commits.iter().enumerate() {
         // Commit metadata capture is decoupled from the stats skip-check below: it's
-        // cheap (one object lookup, no diffing) and idempotent (INSERT OR IGNORE), so we
-        // always ensure a `commits` row exists — including for commits whose `stats` work
-        // is about to be skipped. This is what lets upgrading and re-running `analyze` on
-        // an already-fully-analyzed database backfill `commits` without a full re-walk.
+        // cheap (one object lookup, no diffing) and idempotent, so we always ensure a
+        // `commits` row exists — including for commits whose `stats` work is about to be
+        // skipped. This is what lets upgrading and re-running `analyze` on an
+        // already-fully-analyzed database backfill `commits` without a full re-walk.
+        //
+        // Line stats are the exception: computing them requires a diff, so they're only
+        // computed when not already recorded (fresh row, or a pre-migration/backfilling
+        // row whose stats are still NULL) — otherwise re-running `analyze` on a fully
+        // backfilled database would re-diff every commit on every run.
         let meta = git::commit_meta(&repo, commit_sha)?;
+        let line_stats = if db::commit_store::needs_line_stats(&conn, &args.repo, commit_sha)? {
+            Some(git::commit_line_stats(&repo, commit_sha)?)
+        } else {
+            None
+        };
         db::commit_store::insert_commit(
             &conn,
             &db::commit_store::CommitRow {
@@ -70,6 +80,9 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
                 committer_date: meta.committer_date,
                 committer_name: meta.committer_name,
                 committer_email: meta.committer_email,
+                additions: line_stats.as_ref().map(|s| s.additions),
+                deletions: line_stats.as_ref().map(|s| s.deletions),
+                files_changed: line_stats.as_ref().map(|s| s.files_changed),
             },
         )?;
 

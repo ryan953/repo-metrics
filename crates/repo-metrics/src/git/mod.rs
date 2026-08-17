@@ -165,6 +165,36 @@ pub fn parent_sha(repo: &Repository, commit_sha: &str) -> Result<Option<String>>
     Ok(commit.parent_ids().next().map(|p| p.to_string()))
 }
 
+/// Line-level diff size for a single commit.
+pub struct CommitLineStats {
+    pub additions: i64,
+    pub deletions: i64,
+    pub files_changed: i64,
+}
+
+/// Returns line-level diff stats for a commit against its first parent (the empty tree
+/// for a root commit), same convention as `git show --stat` — merge commits are sized
+/// against their first parent only, not a combined diff of all parents.
+///
+/// Unlike `commit_meta`, this generates a full diff/patch and is not cheap; call it only
+/// when the stats aren't already recorded (see `commit_store::needs_line_stats`).
+pub fn commit_line_stats(repo: &Repository, commit_sha: &str) -> Result<CommitLineStats> {
+    let oid = Oid::from_str(commit_sha)?;
+    let commit = repo.find_commit(oid)?;
+    let new_tree = commit.tree()?;
+    let old_tree = match commit.parent_ids().next() {
+        Some(parent_oid) => Some(repo.find_commit(parent_oid)?.tree()?),
+        None => None,
+    };
+    let diff = repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None)?;
+    let stats = diff.stats()?;
+    Ok(CommitLineStats {
+        additions: stats.insertions() as i64,
+        deletions: stats.deletions() as i64,
+        files_changed: stats.files_changed() as i64,
+    })
+}
+
 /// Returns the list of file changes between two commits (old → new).
 pub fn diff_commits(repo: &Repository, old_sha: &str, new_sha: &str) -> Result<Vec<FileDiff>> {
     let old_tree = repo.find_commit(Oid::from_str(old_sha)?)?.tree()?;

@@ -136,6 +136,9 @@ struct CommitRow {
     committer_date: String,
     committer_name: String,
     committer_email: String,
+    additions: Option<i64>,
+    deletions: Option<i64>,
+    files_changed: Option<i64>,
 }
 
 fn read_commits(db_path: &Path) -> Vec<CommitRow> {
@@ -143,7 +146,8 @@ fn read_commits(db_path: &Path) -> Vec<CommitRow> {
     let mut stmt = conn
         .prepare(
             "SELECT sha, author_date, author_name, author_email,
-                    committer_date, committer_name, committer_email
+                    committer_date, committer_name, committer_email,
+                    additions, deletions, files_changed
              FROM commits WHERE repo = ?1 ORDER BY author_date",
         )
         .unwrap();
@@ -157,6 +161,9 @@ fn read_commits(db_path: &Path) -> Vec<CommitRow> {
                 committer_date: row.get(4)?,
                 committer_name: row.get(5)?,
                 committer_email: row.get(6)?,
+                additions: row.get(7)?,
+                deletions: row.get(8)?,
+                files_changed: row.get(9)?,
             })
         })
         .unwrap();
@@ -206,6 +213,15 @@ fn analyze_populates_commits_table_with_author_and_committer_identity() {
     assert_eq!(commits[2].author_name, "Bob");
     assert_eq!(commits[2].author_email, "bob@example.com");
     assert_eq!(commits[2].author_date, iso(1_700_003_600));
+
+    // Each commit in the chain adds exactly one new single-line file (a.txt, b.txt,
+    // c.txt in turn — including the root commit, diffed against the empty tree), so
+    // every row should show the same line-level shape regardless of chain position.
+    for c in &commits {
+        assert_eq!(c.additions, Some(1), "commit {}", &c.sha[..8]);
+        assert_eq!(c.deletions, Some(0), "commit {}", &c.sha[..8]);
+        assert_eq!(c.files_changed, Some(1), "commit {}", &c.sha[..8]);
+    }
 }
 
 #[test]
@@ -255,4 +271,71 @@ fn rerunning_analyze_backfills_commits_without_redoing_stats() {
     assert_eq!(read_commits(&db_path).len(), 3);
     // ...without re-running the (skipped) stats aggregation for those same commits.
     assert_eq!(count_stats_rows(&db_path), stats_rows_before);
+}
+
+/// Simulates upgrading a database written by a `repo-metrics` version that had the
+/// `commits` table but predates line-stat tracking: drop the `additions`/`deletions`/
+/// `files_changed` columns entirely (as if they never existed), then re-run `analyze`.
+/// The re-run must add the columns back and backfill every row's line stats, again
+/// without redoing the `stats` aggregation for commits already recorded there.
+#[test]
+fn rerunning_analyze_migrates_and_backfills_missing_line_stat_columns() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_dir = tmp.path().join("repo");
+    std::fs::create_dir(&repo_dir).unwrap();
+    init_repo(&repo_dir);
+
+    let db_path = tmp.path().join("metrics.db");
+    run_analyze(&repo_dir, &db_path);
+    let commits_before = read_commits(&db_path);
+    assert_eq!(commits_before.len(), 3);
+    assert!(commits_before.iter().all(|c| c.additions.is_some()));
+    let stats_rows_before = count_stats_rows(&db_path);
+    assert!(stats_rows_before > 0);
+
+    // Simulate a pre-line-stats database: the columns don't exist at all.
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE commits DROP COLUMN additions;
+             ALTER TABLE commits DROP COLUMN deletions;
+             ALTER TABLE commits DROP COLUMN files_changed;",
+        )
+        .unwrap();
+    }
+
+    run_analyze(&repo_dir, &db_path);
+
+    // Columns exist again and every row's line stats are backfilled...
+    let commits_after = read_commits(&db_path);
+    assert_eq!(commits_after.len(), 3);
+    for c in &commits_after {
+        assert_eq!(c.additions, Some(1), "commit {}", &c.sha[..8]);
+        assert_eq!(c.deletions, Some(0), "commit {}", &c.sha[..8]);
+        assert_eq!(c.files_changed, Some(1), "commit {}", &c.sha[..8]);
+    }
+    // ...without re-running the (skipped) stats aggregation for those same commits.
+    assert_eq!(count_stats_rows(&db_path), stats_rows_before);
+}
+
+/// A commit row whose line stats were already backfilled must not be re-diffed (and
+/// therefore not silently reset to NULL) on a later `analyze` run.
+#[test]
+fn rerunning_analyze_does_not_reset_already_backfilled_line_stats() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_dir = tmp.path().join("repo");
+    std::fs::create_dir(&repo_dir).unwrap();
+    init_repo(&repo_dir);
+
+    let db_path = tmp.path().join("metrics.db");
+    run_analyze(&repo_dir, &db_path);
+    run_analyze(&repo_dir, &db_path);
+
+    let commits = read_commits(&db_path);
+    assert_eq!(commits.len(), 3);
+    for c in &commits {
+        assert_eq!(c.additions, Some(1));
+        assert_eq!(c.deletions, Some(0));
+        assert_eq!(c.files_changed, Some(1));
+    }
 }
