@@ -28,6 +28,7 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
     let repo = git::open(&args.repo_path)?;
     let conn = db::open(&args.db)?;
     db::schema::ensure(&conn)?;
+    db::schema::ensure_commits_table(&conn)?;
 
     let since = args.since.as_deref().map(parse_since_date).transpose()?;
     let commits = git::all_commits(&repo, &args.commit, since)?;
@@ -52,6 +53,26 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
     conn.execute_batch("BEGIN")?;
 
     for (i, (commit_sha, commit_date)) in commits.iter().enumerate() {
+        // Commit metadata capture is decoupled from the stats skip-check below: it's
+        // cheap (one object lookup, no diffing) and idempotent (INSERT OR IGNORE), so we
+        // always ensure a `commits` row exists — including for commits whose `stats` work
+        // is about to be skipped. This is what lets upgrading and re-running `analyze` on
+        // an already-fully-analyzed database backfill `commits` without a full re-walk.
+        let meta = git::commit_meta(&repo, commit_sha)?;
+        db::commit_store::insert_commit(
+            &conn,
+            &db::commit_store::CommitRow {
+                repo: args.repo.clone(),
+                sha: commit_sha.clone(),
+                author_date: meta.author_date,
+                author_name: meta.author_name,
+                author_email: meta.author_email,
+                committer_date: meta.committer_date,
+                committer_name: meta.committer_name,
+                committer_email: meta.committer_email,
+            },
+        )?;
+
         if db::store::commit_exists(&conn, &args.repo, commit_sha)? {
             skipped += 1;
             continue;
@@ -149,7 +170,11 @@ fn run_analyze(args: cli::AnalyzeArgs) -> Result<()> {
         }
 
         analyzed += 1;
-        if analyzed.is_multiple_of(BATCH_SIZE) {
+        // Batched on total iterations (not just `analyzed`) so a run that's mostly or
+        // entirely backfilling `commits` for already-analyzed history — where `analyzed`
+        // may never advance — still commits the transaction periodically instead of
+        // holding tens of thousands of commit-metadata inserts open at once.
+        if (i + 1).is_multiple_of(BATCH_SIZE) {
             conn.execute_batch("COMMIT; BEGIN")?;
         }
     }
