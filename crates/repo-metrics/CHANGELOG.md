@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/ryan953/repo-metrics/releases/tag/v0.2.0) - 2026-08-17
+
+### Added
+
+- *(db)* Add additions/deletions/files_changed to commits table ([#10](https://github.com/ryan953/repo-metrics/pull/10))
+- *(db)* Add commits table with per-commit author/committer identity ([#9](https://github.com/ryan953/repo-metrics/pull/9))
+- *(db)* Add parent_sha column to stats table
+
+### Other
+
+- Release 0.2.0 ([#7](https://github.com/ryan953/repo-metrics/pull/7))
+- release v0.1.0 ([#4](https://github.com/ryan953/repo-metrics/pull/4))
+- Add build workflow and release automation ([#1](https://github.com/ryan953/repo-metrics/pull/1))
+- Apply cargo clippy fixes ([#3](https://github.com/ryan953/repo-metrics/pull/3))
+- Apply cargo fmt
+- *(db)* Replace per-commit rows with validity-range dedup (SCD Type 2)
+- Convert to Cargo workspace monorepo
+
 ## [0.1.0](https://github.com/ryan953/repo-metrics/releases/tag/v0.1.0) - 2026-07-03
 
 ### Added
