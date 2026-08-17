@@ -40,7 +40,7 @@ release for that tag.
 
 ## Commands
 
-- **`analyze`** — Walk git commit history and collect code metrics (SLOC, file types, exports)
+- **`analyze`** — Walk git commit history and collect code metrics (SLOC, file types, exports) plus per-commit author/committer identity
 - **`prs`** — Fetch pull request authors, reviewers, and review activity from the GitHub API
 - **`status`** — Show how many commits from git history are loaded in the database
 
@@ -216,6 +216,35 @@ Written by the `analyze` command. Each analyzed commit produces three tiers of r
 | `config`    | `*.config.*`, known config filenames (`jest.config.ts`, `vite.config.ts`, `eslint.config.js`, etc.) |
 | `source`    | All other JS/TS files                                                                               |
 
+### `commits` table
+
+Written by the `analyze` command, for every commit visited — independent of
+`--granularity` and independent of whether that commit's `stats` rows were already
+recorded on a previous run. One row per commit.
+
+| Column            | Type | Description                                                             |
+|-------------------|------|---------------------------------------------------------------------------|
+| `repo`            | TEXT | Repository identity (`org/repo`)                                          |
+| `sha`             | TEXT | Full 40-character commit SHA                                              |
+| `author_date`     | TEXT | ISO 8601 author date — when the change was originally authored            |
+| `author_name`     | TEXT | Author name, as recorded on the commit                                    |
+| `author_email`    | TEXT | Author email, as recorded on the commit                                   |
+| `committer_date`  | TEXT | ISO 8601 committer date — when the commit object was created (may differ from `author_date` for rebases, squash-merges, cherry-picks, etc.) |
+| `committer_name`  | TEXT | Committer name, as recorded on the commit                                 |
+| `committer_email` | TEXT | Committer email, as recorded on the commit                                |
+
+Unique on `(repo, sha)`; inserts are `INSERT OR IGNORE`, so re-running `analyze` never
+duplicates rows.
+
+**Upgrading an existing database:** if you have a database with `stats` history already
+populated by an older version of `repo-metrics` (which had no `commits` table), a normal
+`analyze` re-run against the same `--commit` ref will create the `commits` table and
+backfill it for the *entire* commit history — not just new commits. This backfill is
+cheap: capturing a commit's author/committer metadata is a single object lookup with no
+file diffing, so it happens for every commit in the walk regardless of whether that
+commit's `stats` rows are skipped as already-recorded. A full, expensive re-analysis
+(dropping/recreating the database) is **not** required to get `commits` populated.
+
 ### `pull_requests` table
 
 Written by the `prs` command. One row per PR.
@@ -287,6 +316,26 @@ SELECT commit_date, story_file_count
 FROM stats
 WHERE repo = 'getsentry/sentry' AND row_type = 'repo'
 ORDER BY commit_date;
+
+-- Commits per author per month
+SELECT author_email,
+       strftime('%Y-%m', author_date) AS month,
+       COUNT(*) AS commits
+FROM commits
+WHERE repo = 'getsentry/sentry'
+GROUP BY author_email, month
+ORDER BY month, commits DESC;
+
+-- Top authors by commit count, comparing two calendar years
+SELECT author_email,
+       SUM(CASE WHEN strftime('%Y', author_date) = '2024' THEN 1 ELSE 0 END) AS commits_2024,
+       SUM(CASE WHEN strftime('%Y', author_date) = '2025' THEN 1 ELSE 0 END) AS commits_2025
+FROM commits
+WHERE repo = 'getsentry/sentry'
+  AND strftime('%Y', author_date) IN ('2024', '2025')
+GROUP BY author_email
+ORDER BY commits_2025 DESC
+LIMIT 15;
 
 -- Top PR authors (merged PRs)
 SELECT author, COUNT(*) AS prs

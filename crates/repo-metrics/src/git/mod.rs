@@ -77,13 +77,47 @@ pub fn all_commits(
 
 fn commit_sha_and_date(commit: &git2::Commit<'_>) -> (String, String) {
     let sha = commit.id().to_string();
-    let date = chrono::Utc
-        .timestamp_opt(commit.time().seconds(), 0)
+    let date = git_time_to_iso(commit.time());
+    (sha, date)
+}
+
+fn git_time_to_iso(time: git2::Time) -> String {
+    chrono::Utc
+        .timestamp_opt(time.seconds(), 0)
         .single()
         .unwrap_or_default()
         .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
-    (sha, date)
+        .to_string()
+}
+
+/// Author/committer identity and dates for a single commit.
+pub struct CommitMeta {
+    pub author_name: String,
+    pub author_email: String,
+    pub author_date: String,
+    pub committer_name: String,
+    pub committer_email: String,
+    pub committer_date: String,
+}
+
+/// Returns author/committer name, email, and date for a commit.
+///
+/// Cheap: a single commit object lookup, no tree walk or diffing — safe to call for
+/// every commit in a walk, including ones whose `stats` rows were already recorded on
+/// a previous run.
+pub fn commit_meta(repo: &Repository, commit_sha: &str) -> Result<CommitMeta> {
+    let oid = Oid::from_str(commit_sha)?;
+    let commit = repo.find_commit(oid)?;
+    let author = commit.author();
+    let committer = commit.committer();
+    Ok(CommitMeta {
+        author_name: author.name().unwrap_or_default().to_string(),
+        author_email: author.email().unwrap_or_default().to_string(),
+        author_date: git_time_to_iso(author.when()),
+        committer_name: committer.name().unwrap_or_default().to_string(),
+        committer_email: committer.email().unwrap_or_default().to_string(),
+        committer_date: git_time_to_iso(committer.when()),
+    })
 }
 
 pub fn walk_files(repo: &Repository, commit_sha: &str) -> Result<Vec<FileEntry>> {

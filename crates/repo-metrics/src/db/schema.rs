@@ -92,6 +92,37 @@ pub fn drop_unique_index(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Creates the `commits` table: one row per commit, capturing author/committer identity
+/// and dates. Populated during `analyze` for every commit visited, independent of the
+/// `stats` skip logic, so re-running `analyze` on an already-fully-analyzed repo still
+/// backfills any rows missing here.
+pub fn ensure_commits_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS commits (
+            id              INTEGER PRIMARY KEY,
+            repo            TEXT    NOT NULL,
+            sha             TEXT    NOT NULL,
+
+            author_date     TEXT    NOT NULL,
+            author_name     TEXT    NOT NULL,
+            author_email    TEXT    NOT NULL,
+
+            committer_date  TEXT    NOT NULL,
+            committer_name  TEXT    NOT NULL,
+            committer_email TEXT    NOT NULL,
+
+            UNIQUE(repo, sha)
+        );
+
+        -- Index for author/date range scans and 'GROUP BY author_email,
+        -- strftime(..., author_date)'-style month/year rollups.
+        CREATE INDEX IF NOT EXISTS idx_commits_author_date
+            ON commits(repo, author_date);
+        ",
+    )?;
+    Ok(())
+}
+
 pub fn ensure_pr_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS pull_requests (
